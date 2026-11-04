@@ -394,6 +394,7 @@ One schema covers every kind of task. Fields that don't apply come back empty an
 - **Save to company memory** sends `POST /api/memory` with `{ type: 'memory', text }`, adding it to `state.memories`, which `sessionContext()` also puts into every later prompt ("apply these preferences").
 - **Create skill** sends `{ type: 'skill', skill }`, adding it to `state.skills` (stored only; in Afternoon this would create a firm skill).
 - Each choice is saved on its message (`m.choice`), so the buttons turn into a confirmation and stay that way after redraws.
+- Under each offer, `explain(what, why)` in `app.js` shows **What this does** and **Why it's useful**, so the adviser understands the feature before using it. The note disappears once they've chosen.
 
 ---
 

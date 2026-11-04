@@ -721,7 +721,21 @@ function renderMemory(task, m) {
     m.choice ? confirmLine(m.choice) : el('div', { class: 'actions' },
       el('button', { class: 'btn', onclick: async () => { await api('/api/memory', { type: 'memory', text: m.text }); m.choice = "Saved to company memory. I'll use it from now on."; refresh(task); } }, 'Save to company memory'),
       el('button', { class: 'btn ghost', onclick: () => { m.choice = 'Not saved.'; refresh(task); } }, 'No thanks')
+    ),
+    // Explain the option underneath, while it's still a choice: advisers are
+    // more likely to use a feature when they can see what it's for.
+    !m.choice && explain(
+      'Saves this to your firm\'s shared memory, so Siesta applies it in every future conversation, for you and your colleagues.',
+      'Nobody has to remember or repeat it. Drafts, prep and answers follow it automatically from now on.'
     )
+  );
+}
+
+// The "what this does / why it's useful" note under memory and skill offers.
+function explain(what, why) {
+  return el('div', { class: 'explain' },
+    el('p', {}, el('strong', {}, 'What this does: '), what),
+    el('p', {}, el('strong', {}, "Why it's useful: "), why)
   );
 }
 
@@ -732,6 +746,10 @@ function renderSkill(task, m) {
     m.choice ? confirmLine(m.choice) : el('div', { class: 'actions' },
       el('button', { class: 'btn', onclick: async () => { await api('/api/memory', { type: 'skill', skill: m.skill }); m.choice = `Skill "${m.skill.name}" created.`; refresh(task); } }, 'Create skill'),
       el('button', { class: 'btn ghost', onclick: () => { m.choice = 'Skipped.'; refresh(task); } }, 'Not now')
+    ),
+    !m.choice && explain(
+      `Turns this task into a reusable skill anyone in your firm can run by name, e.g. "Run ${m.skill.name} for the Smiths".`,
+      'Repeat work becomes a single request, done the same consistent way every time, whoever runs it.'
     )
   );
 }
