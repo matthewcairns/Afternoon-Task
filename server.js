@@ -21,7 +21,7 @@
 //        POST /api/reset     start a fresh onboarding (page load)
 //        POST /api/triage    to-do lines        -> green / yellow / red cards
 //        POST /api/extract   one uploaded file  -> fields found, with citations
-//        POST /api/finalise  adviser's reviewed fields -> the client record
+//        POST /api/finalise  extracted fields + documents -> the client record
 //        POST /api/run       one turn of a task's chat -> drafts, answers, proposals
 //        POST /api/approve   adviser approves a proposed record change
 //        POST /api/memory    adviser saves a suggested memory or skill
@@ -280,8 +280,9 @@ async function triage({ tasks }) {
 // 5. /api/extract and /api/finalise — getting client data INTO Afternoon
 // -----------------------------------------------------------------------------
 // This mirrors Afternoon's document flow: pick an upload model, the platform
-// reads the file with AI (Extracting -> Ready), then "Process data" shows what
-// it found as new information, updates and conflicts, each with a citation.
+// reads the file with AI (Extracting -> Ready), and each field found is tagged
+// new / update / conflict with a citation. (The product then shows a review
+// screen; the demo skips it after "Process data" and accepts everything.)
 // The upload model changes what the AI looks for, as it would in the product.
 const UPLOAD_MODELS = {
   'Fact Find': 'An existing fact find. Extract personal details, dependants, employment and income, health, objectives, attitude to risk, capacity for loss, liabilities, protection, soft facts and ID/AML checks.',
@@ -324,7 +325,8 @@ Every item needs an exact quote from the document as its citation. Only extract 
   return result;
 }
 
-// The adviser has reviewed the findings and clicked "Finalise review".
+// The adviser clicked "Process data" (in the product: after reviewing each
+// field and clicking "Finalise review"; the demo accepts everything).
 // Accepted fields land on the record (updates and conflicts replace the old
 // value), and the documents become searchable: they "stay in the client's
 // Documents area", so Siesta can quote them later.
