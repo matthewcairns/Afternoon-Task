@@ -52,6 +52,7 @@ function ensureUploadCard() {
     id: 'upload',
     text: 'Get your client information into Afternoon',
     status: 'needs_you',
+    messages: [], // its own chat, like every task
     triage: {
       kind: 'upload',
       colour: 'yellow',
@@ -61,6 +62,8 @@ function ensureUploadCard() {
     },
   });
 }
+
+const uploadTask = () => tasks.find((t) => t.id === 'upload');
 
 const uploadSummary = () => `${upload.finalised.length} document${upload.finalised.length === 1 ? '' : 's'} in Afternoon`;
 
@@ -151,7 +154,7 @@ function renderChoose() {
 async function addFiles(fileList) {
   for (const file of fileList) {
     if (upload.files.length >= MAX_FILES) {
-      say(el('p', {}, `Afternoon takes ${MAX_FILES} files per upload, so I've left out "${file.name}". Upload it in the next batch.`));
+      post(uploadTask(), { text: `Afternoon takes ${MAX_FILES} files per upload, so I've left out "${file.name}". Upload it in the next batch.` });
       break;
     }
     const entry = { name: file.name, model: guessModel(file.name), status: 'waiting' };
@@ -262,13 +265,13 @@ async function finaliseUpload(accepted) {
   upload.stage = 'choose';
 
   // The card stays (more documents can be added later) but turns green.
-  const card = tasks.find((t) => t.id === 'upload');
+  const card = uploadTask();
   card.status = 'done';
   card.triage.colour = 'green';
   card.triage.short_label = 'Add more anytime';
 
-  closeDetail();
-  say(confirmLine(`Review finalised: ${accepted.length} fields from ${docs.length} document${docs.length === 1 ? '' : 's'} are now on the Hendersons' profile. The originals stay in their Documents area.`));
+  // Report in this task's chat, then re-sort the list (app.js).
+  card.messages.push({ role: 'siesta', kind: 'note', text: `Review finalised: ${accepted.length} fields from ${docs.length} document${docs.length === 1 ? '' : 's'} are now on the Hendersons' profile. The originals stay in their Documents area.` });
   refresh();
-  await resortAfterUpload();
+  await resortAfterUpload(card);
 }

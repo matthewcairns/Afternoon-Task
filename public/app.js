@@ -1,9 +1,17 @@
 // =============================================================================
 // Siesta To-Do Onboarding — the panel (plain browser JavaScript, no framework)
 // -----------------------------------------------------------------------------
-// The whole UI is driven by ONE array, `tasks`, in priority order. Every user
-// action changes that array (or a task in it), then calls `refresh()`, which
-// redraws the board and any open task detail.
+// The panel has three places, one at a time:
+//   - Conversation: Siesta's general chat (welcome, list summary, "done" pings)
+//   - To-Do List:   the whole list, full height. Drag to prioritise, edit, add.
+//   - A task:       each task is its OWN chat session with Siesta. The top
+//                   message is the task's brief (why it's that colour, what
+//                   Siesta needs, buttons for the actions); below it, the
+//                   adviser and Siesta talk about just that task.
+//
+// The UI is driven by ONE array, `tasks`, in priority order. Each task holds
+// its own `messages`. Every change updates the data, then calls `refresh()`,
+// which redraws from it.
 // WHY this pattern? It's the core idea of React, without React: one source of
 // truth and a "draw everything from state" function. Easy to follow and debug.
 //
@@ -11,22 +19,19 @@
 //   sorting   -> sent to /api/triage, waiting for a colour
 //   ready     -> green: Siesta can do it alone, waiting for "Start working"
 //   needs_you -> yellow/red: waiting for the adviser (upload, answer, call…)
-//   queued    -> in Siesta's work queue (worked top to bottom)
+//   queued    -> in Siesta's background work queue (worked top to bottom)
 //   working   -> /api/run in progress
-//   done      -> result ready to review (drafts, proposals, answers)
+//   done      -> Siesta has replied in the task's chat; follow-ups welcome
 //   error     -> something failed; the adviser can retry
-//
-// The special "upload" card (see upload.js) walks a first-time adviser through
-// getting client information into Afternoon. Once they finalise an upload,
-// every open task is sorted again, and some turn green.
 // =============================================================================
 
 const tasks = [];
 let nextId = 1;
 let started = false; // has the adviser pressed "Start working"?
-let busy = false; // is Siesta currently running a task? (one at a time)
+let busy = false; // is the background queue running a task? (one at a time)
 let meanwhile = ''; // "what you can do meanwhile" tip from the last triage
-let openTaskId = null; // which task's detail view is showing, if any
+let tab = 'conversation'; // 'conversation' or 'todo'
+let openTaskId = null; // inside the To-Do tab: which task's chat is open
 let dragId = null; // the card currently being dragged
 let editingId = null; // the card whose text is being edited, if any
 
@@ -100,8 +105,10 @@ async function api(path, body = {}) {
 }
 
 const spinner = () => el('span', { class: 'spin' });
+const confirmLine = (text) => el('div', { class: 'confirm' }, '✓ ', text);
 
-// Add a message to the conversation. Returns the node so it can be updated.
+// Add a message to the Conversation tab (the general chat). This log is only
+// ever appended to, so plain DOM appends are enough here.
 function say(...children) {
   const node = el('div', { class: 'msg siesta' }, ...children);
   const log = $('#log');
@@ -125,15 +132,98 @@ function buttonRow(buttons) {
   return row;
 }
 
-const confirmLine = (text) => el('div', { class: 'confirm' }, '✓ ', text);
+// Add a message to ONE task's chat. Task chats are redrawn from data, so a
+// message is stored as data ({ role, kind, ... }), not as DOM.
+function post(task, message) {
+  task.messages.push({ role: 'siesta', kind: 'text', ...message });
+}
 
 // -----------------------------------------------------------------------------
-// 1. First login: the welcome pop-up
+// 1. Navigation: tabs, the list, one task's chat
+// -----------------------------------------------------------------------------
+document.querySelectorAll('.tab[data-tab]').forEach((button) =>
+  button.addEventListener('click', () => {
+    // Clicking To-Do List while inside a task goes back to the whole list.
+    if (button.dataset.tab === 'todo' && tab === 'todo') openTaskId = null;
+    tab = button.dataset.tab;
+    refresh();
+  })
+);
+
+function openTask(id) {
+  tab = 'todo';
+  openTaskId = id;
+  refresh();
+}
+
+function backToList() {
+  openTaskId = null;
+  refresh();
+}
+
+// Redraw everything that depends on state. `changed` (optional) says which
+// task changed: the open chat is only redrawn if it's that task, so a task
+// finishing in the background doesn't disturb what the adviser is typing.
+function refresh(changed) {
+  const inTask = tab === 'todo' && openTaskId;
+  $('#view-conversation').hidden = tab !== 'conversation';
+  $('#todo-list').hidden = tab !== 'todo' || !!openTaskId;
+  $('#task-view').hidden = !inTask;
+  document.querySelectorAll('.tab[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+
+  // The badge counts tasks waiting for the adviser.
+  const waiting = tasks.filter((t) => t.status === 'needs_you').length;
+  $('#todo-badge').hidden = !waiting;
+  $('#todo-badge').textContent = waiting;
+
+  renderComposer();
+  renderBanner();
+  renderBoard();
+  if (inTask && (!changed || changed.id === openTaskId)) renderTaskView();
+}
+
+// One composer, three jobs: add tasks (Conversation), talk about one task
+// (task view), or nothing (the list has its own "+ Add task").
+function renderComposer() {
+  const task = tab === 'todo' && tasks.find((t) => t.id === openTaskId);
+  $('#composer').hidden = tab === 'todo' && !task;
+  $('#demo').hidden = !!task;
+  $('#input').disabled = task ? task.status === 'working' || task.status === 'sorting' : false;
+  $('#input').placeholder = !task ? 'Paste or type tasks to add to your list, one per line…'
+    : task.status === 'needs_you' && task.triage?.kind === 'handoff' ? 'Tell Siesta what you found out…'
+    : task.status === 'needs_you' && task.triage?.kind === 'needs_answers' ? 'Answer here, or use the boxes above…'
+    : task.id === 'upload' ? 'Ask Siesta about adding client information…'
+    : 'Ask Siesta about this task, or ask for changes…';
+}
+
+$('#composer').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = $('#input').value.trim();
+  if (!text) return;
+  $('#input').value = '';
+  const task = tab === 'todo' && tasks.find((t) => t.id === openTaskId);
+  if (task) sendTaskMessage(task, text);
+  else addTasksFromText(text);
+});
+
+// Enter adds a new line (lists need line breaks); Ctrl/Cmd+Enter sends.
+$('#input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('#composer').requestSubmit();
+});
+
+$('#demo').addEventListener('click', () => {
+  $('#input').value = DEMO_LIST;
+  $('#input').focus();
+});
+
+// -----------------------------------------------------------------------------
+// 2. First login: the welcome pop-up
 // -----------------------------------------------------------------------------
 // Every page load is treated as a first login: the server session is wiped and
 // the pop-up appears. WHY a pop-up rather than a tour? The quickest route to
 // value is the adviser's own work, so the very first thing we ask for is it.
 api('/api/reset');
+refresh();
 
 $('#welcome-demo').addEventListener('click', () => ($('#welcome-input').value = DEMO_LIST));
 
@@ -160,26 +250,8 @@ function greet() {
 }
 
 // -----------------------------------------------------------------------------
-// 2. Turning pasted text into tasks
+// 3. Turning pasted text into tasks, and sorting them
 // -----------------------------------------------------------------------------
-$('#demo').addEventListener('click', () => {
-  $('#input').value = DEMO_LIST;
-  $('#input').focus();
-});
-
-// Enter adds a new line (lists need line breaks); Ctrl/Cmd+Enter sends.
-$('#input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('#composer').requestSubmit();
-});
-
-$('#composer').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const text = $('#input').value.trim();
-  if (!text) return;
-  $('#input').value = '';
-  addTasksFromText(text);
-});
-
 // Split pasted text into one task per line. Word is the awkward case: a
 // pasted Word list can bring Windows line endings, non-breaking spaces,
 // tabs, and bullet characters ("•", "o", "§", or Symbol-font characters
@@ -196,19 +268,22 @@ function parseTaskLines(text) {
     .filter((line) => line && !(line.endsWith(':') && line.length < 40));
 }
 
+const newTask = (text) => ({ id: `t${nextId++}`, text, status: 'sorting', messages: [] });
+
 async function addTasksFromText(text) {
   youSay(text);
   const lines = parseTaskLines(text);
   if (!lines.length) return;
-  const newTasks = lines.map((line) => ({ id: `t${nextId++}`, text: line, status: 'sorting' }));
-  tasks.push(...newTasks);
-  $('#board').hidden = false;
+  const added = lines.map(newTask);
+  tasks.push(...added);
+  // Go straight to the list: the adviser sees their own tasks appear and
+  // get sorted, which is the "aha" moment.
+  tab = 'todo';
+  openTaskId = null;
   refresh();
 
-  const thinking = say(spinner(), ` Sorting ${newTasks.length} task${newTasks.length > 1 ? 's' : ''} into what I can do, what needs you, and what I can't…`);
-  const ok = await sortTasks(newTasks);
-  thinking.remove();
-  if (ok) summariseTriage(newTasks);
+  const ok = await sortTasks(added);
+  if (ok) summariseTriage(added);
 }
 
 // Send tasks to /api/triage and apply the result. Used for a new list, an
@@ -227,7 +302,7 @@ async function sortTasks(list) {
       task.status = t.colour === 'green' ? (started ? 'queued' : 'ready') : 'needs_you';
     }
     meanwhile = result.meanwhile;
-    ensureUploadCard();
+    ensureUploadCard(); // from upload.js
     refresh();
     if (started) processQueue();
     return true;
@@ -239,99 +314,87 @@ async function sortTasks(list) {
   }
 }
 
-// After sorting: a short summary, how to use the board, and what to do first.
-function summariseTriage(newTasks) {
-  const count = (colour) => newTasks.filter((t) => t.triage?.colour === colour).length;
-  const needData = newTasks.filter((t) => t.triage?.kind === 'needs_upload').length;
+// A record of the sort in the Conversation tab, with a way back to the list.
+function summariseTriage(added) {
+  const count = (colour) => added.filter((t) => t.triage?.colour === colour).length;
   say(
-    el('p', {}, `I've sorted your ${newTasks.length} tasks:`),
-    el('ul', {},
-      el('li', {}, `🟢 ${count('green')} I can do on my own`),
-      el('li', {}, `🟡 ${count('yellow')} need a bit of you`),
-      el('li', {}, `🔴 ${count('red')} I can't do, but I'll show you what I can do instead`)
-    ),
-    needData > 0 && el('p', {}, `${needData} of them need your client information in Afternoon first. I've added a card at the top to walk you through it: it's the quickest way to turn them green.`),
-    el('p', {}, 'Drag the cards to set priority, and use ✎ to fix anything I misread. Click a yellow or red card to see what I need from you.'),
-    buttonRow([
-      needData > 0 && ['Show me how to add client info', () => openDetail('upload')],
-      !started && count('green') > 0 && ['Start working', (row) => { row.remove(); startWork(); }],
-    ].filter(Boolean))
+    el('p', {}, `I've sorted your ${added.length} tasks: 🟢 ${count('green')} I can do on my own, 🟡 ${count('yellow')} need a bit of you, 🔴 ${count('red')} I can't do (I'll suggest what I can instead).`),
+    el('p', {}, 'Each task has its own chat with me in the To-Do List, with my questions and the actions needed right there.'),
+    buttonRow([['Open my To-Do List', () => { tab = 'todo'; openTaskId = null; refresh(); }]])
   );
+}
+
+// The summary at the top of the To-Do List: counts, and the next best step.
+function renderBanner() {
+  const real = tasks.filter((t) => t.id !== 'upload');
+  if (!real.length) {
+    $('#banner').replaceChildren(el('p', { class: 'empty' }, 'No tasks yet. Paste your to-do list in the Conversation tab, or use "+ Add task" below.'));
+    return;
+  }
+  const count = (colour) => real.filter((t) => t.triage?.colour === colour).length;
+  const sorting = real.some((t) => t.status === 'sorting');
+  const ready = real.filter((t) => t.status === 'ready').length;
+  const upload = tasks.find((t) => t.id === 'upload' && t.status === 'needs_you');
+  $('#banner').replaceChildren(el('div', { class: 'banner' },
+    sorting
+      ? el('p', {}, spinner(), ' Sorting into what I can do, what needs you, and what I can\'t…')
+      : el('p', {}, `🟢 ${count('green')} Siesta can do · 🟡 ${count('yellow')} need you · 🔴 ${count('red')} can't`),
+    upload && el('p', {}, 'Start with the first card: your client information unlocks most of the others.'),
+    !sorting && el('p', { class: 'small' }, 'Drag to set priority, ✎ to fix anything I misread. Open a card to see what I need and chat about it.'),
+    started && meanwhile && el('p', {}, 'Meanwhile: ', meanwhile),
+    !started && ready > 0 && el('div', { class: 'actions' }, el('button', { class: 'btn', onclick: startWork }, `Start working (${ready})`))
+  ));
 }
 
 function startWork() {
   started = true;
   tasks.filter((t) => t.status === 'ready').forEach((t) => (t.status = 'queued'));
   const first = tasks.find((t) => t.status === 'queued');
-  say(
-    first ? el('p', {}, 'Starting with ', el('strong', {}, first.text), '.') : el('p', {}, "There's nothing I can start on my own yet."),
-    meanwhile && el('p', {}, 'Meanwhile: ', meanwhile)
-  );
+  if (first) say(el('p', {}, 'Starting with ', el('strong', {}, first.text), ". I'll let you know here as each one is done."));
   refresh();
   processQueue();
 }
 
 // Called by upload.js once an upload is finalised: sort every open task again
-// against the newly filled record, and say which ones turned green.
-async function resortAfterUpload() {
-  // Every open card is re-checked (red ones too: new information can change
-  // what's possible, and it costs one request either way).
+// against the newly filled record, and report in the upload task's chat.
+// Red cards are re-checked too: new information can change what's possible.
+async function resortAfterUpload(uploadTask) {
   const open = tasks.filter((t) => t.id !== 'upload' && ['needs_you', 'ready', 'error'].includes(t.status));
   if (!open.length) return;
   const before = new Map(open.map((t) => [t.id, t.triage?.colour]));
-  const thinking = say(spinner(), ' Checking your list again now the information is in Afternoon…');
+  post(uploadTask, { kind: 'typing', text: 'Checking your list again now the information is in Afternoon…' });
+  refresh(uploadTask);
   const ok = await sortTasks(open);
-  thinking.remove();
-  if (!ok) return;
+  uploadTask.messages = uploadTask.messages.filter((m) => m.kind !== 'typing');
+  if (!ok) return refresh(uploadTask);
   const turned = open.filter((t) => t.triage.colour === 'green' && before.get(t.id) !== 'green');
-  say(
-    turned.length
-      ? [el('p', {}, `🟢 ${turned.length} task${turned.length > 1 ? 's' : ''} turned green:`), el('ul', {}, turned.map((t) => el('li', {}, t.text)))]
-      : el('p', {}, "Nothing new turned green yet. Open a yellow card to see what's still missing."),
-    turned.length > 0 && !started && buttonRow([['Start working', (row) => { row.remove(); startWork(); }]]),
-    turned.length > 0 && started && el('p', {}, "They're in my queue now.")
-  );
+  post(uploadTask, {
+    text: turned.length
+      ? `🟢 ${turned.length} task${turned.length > 1 ? 's' : ''} turned green:\n${turned.map((t) => `- ${t.text}`).join('\n')}\n\n${started ? "They're in my queue now." : 'Press **Start working** at the top of your To-Do List and I\'ll get on with them.'}`
+      : "Nothing new turned green yet. Open a yellow card to see what's still missing.",
+  });
+  refresh(uploadTask);
 }
 
 // -----------------------------------------------------------------------------
-// 3. The work queue: Siesta does one task at a time, top of the board first
+// 4. Doing a task: the background queue, and each task's own chat
 // -----------------------------------------------------------------------------
+// The queue works through green tasks one at a time, top of the list first.
 // WHY re-check the order each time? If the adviser drags a card while Siesta
-// is busy, the next task picked is whatever is highest on the board THEN.
-let announcedAllDone = false;
-
+// is busy, the next task picked is whatever is highest on the list THEN.
 async function processQueue() {
   if (busy) return;
   const task = tasks.find((t) => t.status === 'queued');
   if (!task) return announceIfAllDone();
-
   busy = true;
-  announcedAllDone = false;
-  task.status = 'working';
-  refresh();
-  try {
-    task.result = await api('/api/run', { task: { text: task.text, triage: task.triage }, ...task.inputs });
-    task.status = 'done';
-    say(
-      el('p', {}, '✓ Done: ', el('strong', {}, task.text)),
-      el('p', {}, task.result.headline),
-      buttonRow([['Review', () => openDetail(task.id), 'btn light']])
-    );
-    suggestMemoryAndSkill(task);
-  } catch (err) {
-    task.status = 'error';
-    task.error = err.message;
-    say(el('p', { class: 'error' }, `I hit a problem with "${task.text}": ${err.message}`));
-  } finally {
-    busy = false;
-    refresh();
-    processQueue(); // move on to the next queued task
-  }
+  await runTask(task, {});
+  busy = false;
+  processQueue();
 }
 
-// When the queue empties, point the adviser at what's still waiting for them.
+let announcedAllDone = false;
 function announceIfAllDone() {
-  if (!started || announcedAllDone || tasks.some((t) => t.status === 'working')) return;
+  if (!started || announcedAllDone || tasks.some((t) => t.status === 'working' || t.status === 'queued')) return;
   announcedAllDone = true;
   const waiting = tasks.filter((t) => t.status === 'needs_you');
   say(
@@ -340,56 +403,67 @@ function announceIfAllDone() {
   );
 }
 
-// Offer to save useful things to company memory or turn repeat work into a
-// skill. Nothing is saved unless the adviser clicks (guardrail from the doc).
-function suggestMemoryAndSkill(task) {
-  const { memory_suggestion: memory, skill_suggestion: skill } = task.result;
-  if (memory) {
-    say(
-      el('p', {}, '💡 Worth remembering for next time?'),
-      el('blockquote', {}, memory),
-      buttonRow([
-        ['Save to company memory', async (row) => {
-          await api('/api/memory', { type: 'memory', text: memory });
-          row.replaceWith(confirmLine("Saved to company memory. I'll use it from now on."));
-        }],
-        ['No thanks', (row) => row.replaceWith(confirmLine('Not saved.')), 'btn ghost'],
-      ])
-    );
-  }
-  if (skill) {
-    say(
-      el('p', {}, '🔁 This looks like repeat work. Turn it into a skill the whole firm can run by name?'),
-      el('blockquote', {}, el('strong', {}, skill.name), ': ', skill.description),
-      buttonRow([
-        ['Create skill', async (row) => {
-          await api('/api/memory', { type: 'skill', skill });
-          row.replaceWith(confirmLine(`Skill "${skill.name}" created.`));
-        }],
-        ['Not now', (row) => row.replaceWith(confirmLine('Skipped.')), 'btn ghost'],
-      ])
-    );
-  }
+// The conversation so far on one task, sent with each turn so Siesta can
+// handle follow-ups ("make it shorter", "add Tom's ISA too").
+function historyFor(task) {
+  return task.messages
+    .filter((m) => m.role === 'you' || m.kind === 'result')
+    .slice(-8)
+    .map((m) => m.role === 'you'
+      ? { role: 'adviser', text: m.text }
+      : { role: 'siesta', text: [m.result.headline, m.result.body, m.result.email && `EMAIL DRAFT:\n${m.result.email.body}`].filter(Boolean).join('\n') });
 }
 
-// Put a task in the queue with whatever the adviser supplied, then go back to
-// the chat so they can see it being worked on.
-function queueTask(task, inputs = {}) {
-  task.inputs = inputs;
-  task.status = 'queued';
-  say(el('p', {}, "Thanks, I've added ", el('strong', {}, task.text), ' to my queue.'));
-  closeDetail();
-  processQueue();
+// The adviser typed in a task's chat. What it MEANS depends on where the task
+// is: for a handoff it's the outcome of their step, for questions it's the
+// answer, otherwise it's a follow-up or a request for changes.
+function sendTaskMessage(task, text) {
+  const history = historyFor(task);
+  task.messages.push({ role: 'you', text });
+  const waitingOn = task.status === 'needs_you' ? task.triage?.kind : null;
+  const inputs =
+    waitingOn === 'handoff' ? { handoffNote: text }
+    : waitingOn === 'needs_answers' ? { answers: [{ q: task.triage.questions.join(' / '), a: text }] }
+    : { message: text };
+  runTask(task, { ...inputs, history });
+}
+
+// A button in the task brief was pressed. Show it in the chat as the
+// adviser's message, so the session reads like a conversation.
+function act(task, label, inputs) {
+  const history = historyFor(task);
+  task.messages.push({ role: 'you', text: label });
+  runTask(task, { ...inputs, history });
+}
+
+// One turn of a task's chat: call /api/run and post the reply.
+async function runTask(task, inputs) {
+  const hadResult = !!task.result;
+  task.status = 'working';
+  refresh(task);
+  try {
+    const r = await api('/api/run', { task: { text: task.text, triage: task.triage }, ...inputs });
+    task.result = r;
+    task.status = 'done';
+    task.messages.push({ role: 'siesta', kind: 'result', result: r });
+    // Memory and skill suggestions appear in the chat they came from.
+    if (r.memory_suggestion) post(task, { kind: 'memory', text: r.memory_suggestion });
+    if (r.skill_suggestion && !task.messages.some((m) => m.kind === 'skill')) post(task, { kind: 'skill', skill: r.skill_suggestion });
+    // If the adviser isn't looking at this task, ping them in Conversation.
+    if (openTaskId !== task.id || tab !== 'todo') {
+      say(el('p', {}, '✓ Done: ', el('strong', {}, task.text)), el('p', {}, r.headline), buttonRow([['Open', () => openTask(task.id), 'btn light']]));
+    }
+  } catch (err) {
+    task.status = hadResult ? 'done' : 'error';
+    task.error = err.message;
+    post(task, { kind: 'error', text: `I hit a problem: ${err.message}` });
+  }
+  refresh(task);
 }
 
 // -----------------------------------------------------------------------------
-// 4. The board: draggable, editable cards
+// 5. The list: draggable, editable cards
 // -----------------------------------------------------------------------------
-function refresh() {
-  renderBoard();
-  if (openTaskId) renderDetail();
-}
-
 function renderBoard() {
   $('#cards').replaceChildren(...tasks.map((task, i) => renderCard(task, i)));
 }
@@ -403,7 +477,7 @@ function renderCard(task, index) {
     queued: ['Queued'],
     working: [spinner(), ' Working…'],
     done: [task.id === 'upload' ? `✓ ${uploadSummary()}` : '✓ Done: review'],
-    error: ['⚠ Error: click to retry'],
+    error: ['⚠ Error: open to retry'],
   }[task.status];
 
   // While editing, the text becomes an input. Enter saves, Esc cancels.
@@ -422,7 +496,7 @@ function renderCard(task, index) {
       el('button', { title: 'Delete task', onclick: (e) => { e.stopPropagation(); deleteTask(task); } }, '×')
     );
 
-  const card = el('li', { class: `card ${t?.colour || ''} ${task.id === 'upload' ? 'upload' : ''}`, draggable: editingId ? 'false' : 'true', onclick: () => t && openDetail(task.id) },
+  const card = el('li', { class: `card ${t?.colour || ''} ${task.id === 'upload' ? 'upload' : ''}`, draggable: editingId ? 'false' : 'true', onclick: () => t && openTask(task.id) },
     el('div', { class: 'handle', title: 'Drag to reorder' }, el('b', {}, index + 1), '⋮⋮'),
     el('div', {},
       el('div', { class: 'card-top' }, text, tools),
@@ -467,21 +541,19 @@ function moveTask(fromId, toId, after) {
   tasks.splice(target + (after ? 1 : 0), 0, moved);
 }
 
-// Editing a task's wording changes what it means, so the old result and
+// Editing a task's wording changes what it means, so its old chat, result and
 // colour are thrown away and that one task is sorted again.
 function saveEdit(task, value) {
   editingId = null;
   const text = value.trim();
   if (!text || text === task.text) return renderBoard();
-  task.text = text;
-  task.result = null;
-  task.inputs = null;
+  Object.assign(task, { text, result: null, messages: [] });
   sortTasks([task]);
 }
 
 function deleteTask(task) {
   tasks.splice(tasks.indexOf(task), 1);
-  if (openTaskId === task.id) closeDetail();
+  if (openTaskId === task.id) openTaskId = null;
   refresh();
 }
 
@@ -491,7 +563,7 @@ $('#add-task').addEventListener('click', () => {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') input.remove();
     if (e.key !== 'Enter' || !input.value.trim()) return;
-    const task = { id: `t${nextId++}`, text: input.value.trim(), status: 'sorting' };
+    const task = newTask(input.value.trim());
     tasks.push(task);
     input.remove();
     sortTasks([task]);
@@ -501,107 +573,156 @@ $('#add-task').addEventListener('click', () => {
 });
 
 // -----------------------------------------------------------------------------
-// 5. Task detail: what Siesta needs, and what it produced
+// 6. One task's chat: the brief at the top, then the conversation
 // -----------------------------------------------------------------------------
-function openDetail(id) {
-  openTaskId = id;
-  $('#detail').hidden = false;
-  renderDetail();
-  $('#detail').scrollTop = 0;
-}
-
-function closeDetail() {
-  openTaskId = null;
-  $('#detail').hidden = true;
-}
-
-function renderDetail() {
+function renderTaskView() {
   const task = tasks.find((t) => t.id === openTaskId);
-  if (!task) return closeDetail();
+  if (!task) return backToList();
   const t = task.triage;
-  if (!t) return; // still sorting
+  const log = $('#task-log');
 
-  $('#detail').replaceChildren(
-    el('button', { class: 'back', onclick: closeDetail }, '← Back to list'),
+  // Keep the adviser's scroll position unless something new arrived.
+  const switched = log.dataset.task !== task.id;
+  const count = String(task.messages.length) + task.status;
+  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+
+  $('#task-head').replaceChildren(
+    el('button', { class: 'back', onclick: backToList }, '← All tasks'),
+    el('div', {}, t && el('span', { class: `chip ${t.colour}` }, t.short_label)),
+    el('h2', {}, task.text)
+  );
+  log.replaceChildren(...[
+    t ? renderBrief(task) : el('div', { class: 'msg siesta' }, spinner(), ' Sorting…'),
+    ...task.messages.map((m) => renderMessage(task, m)),
+    task.status === 'working' && el('div', { class: 'msg siesta typing' }, spinner(), ' Working on it…'),
+  ].filter(Boolean)); // replaceChildren would print a stray "false" otherwise
+
+  if (switched || nearBottom || log.dataset.count !== count) log.scrollTop = switched && !task.messages.length ? 0 : log.scrollHeight;
+  log.dataset.task = task.id;
+  log.dataset.count = count;
+}
+
+// The first message in every task chat: why it's that colour, how Afternoon
+// helps anyway, and exactly what's needed to move it forward.
+function renderBrief(task) {
+  const t = task.triage;
+  return el('div', { class: 'msg siesta' },
     el('div', { class: 'sheet' },
-      el('span', { class: `chip ${t.colour}` }, t.short_label),
-      el('h2', {}, task.text),
       el('p', {}, t.reason),
-      // Every task says how Afternoon itself helps, even where the AI can't.
       el('div', { class: 'helps' }, el('div', { class: 'label' }, 'How Afternoon helps anyway'), t.afternoon_helps),
-      el('div', { class: 'section' }, task.id === 'upload' ? renderUploadGuide() : renderAction(task))
+      el('div', { class: 'section' }, task.id === 'upload' ? renderUploadGuide() : renderNeeds(task))
     )
   );
 }
 
-// The middle of the detail view depends on the task's state and kind.
-function renderAction(task) {
+// What's needed, by kind. Once the task has moved on, this shrinks to a note:
+// the conversation below has taken over.
+function renderNeeds(task) {
   const t = task.triage;
   if (task.status === 'sorting') return el('div', { class: 'status-line' }, spinner(), 'Sorting…');
-  if (task.status === 'working') return el('div', { class: 'status-line' }, spinner(), 'Siesta is working on this…');
   if (task.status === 'queued') return el('div', { class: 'status-line' }, "Queued: I'll get to this in priority order.");
-  if (task.status === 'done') return renderResult(task);
-  if (task.status === 'error') {
-    return el('div', {}, el('p', { class: 'error' }, task.error), el('button', { class: 'btn', onclick: () => (task.triage ? queueTask(task, task.inputs) : sortTasks([task])) }, 'Try again'));
+  if (task.status === 'working' || task.status === 'done') return el('div', {}, el('div', { class: 'label' }, 'My part'), el('p', {}, t.siesta_part || 'See below.'));
+  if (task.status === 'error') return el('div', {}, el('p', { class: 'error' }, task.error), el('button', { class: 'btn', onclick: () => (task.triage ? act(task, 'Try again', task.inputs || {}) : sortTasks([task])) }, 'Try again'));
+  if (task.status === 'ready') {
+    return el('div', {},
+      el('div', { class: 'label' }, "What I'll do"), el('p', {}, t.siesta_part),
+      el('div', { class: 'actions' }, el('button', { class: 'btn', onclick: () => act(task, 'Do this now', {}) }, 'Do this now')),
+      el('p', { class: 'small' }, 'Or press "Start working" on the list and I\'ll work through every green task, top first.')
+    );
   }
-  if (task.status === 'ready') return el('div', {}, el('div', { class: 'label' }, "What I'll do"), el('p', {}, t.siesta_part), el('p', {}, started ? "It's next in line." : 'Press "Start working" in the chat and I\'ll begin with the top green card.'));
 
   // --- Yellow and red: what Siesta needs from the adviser ---
   if (t.kind === 'needs_upload') {
-    // A first-time adviser's record is empty. Point them at the upload card.
+    // A first-time adviser's record is empty. Point them at the upload task.
     return el('div', {},
       el('div', { class: 'label' }, 'What I need first'),
-      el('p', {}, `The Hendersons' ${t.needs_upload} isn't in Afternoon yet, and I won't guess.`),
+      el('p', {}, t.needs_upload),
+      el('p', { class: 'small' }, "It isn't in Afternoon yet, and I won't guess."),
       el('div', { class: 'label' }, 'Then I will'), el('p', {}, t.siesta_part),
-      el('button', { class: 'btn', onclick: () => openDetail('upload') }, 'Show me how to upload it')
+      el('button', { class: 'btn', onclick: () => openTask('upload') }, 'Show me how to upload it')
     );
   }
   if (t.kind === 'needs_answers') {
     // Questions were generated during sorting (all in one go), but are only
-    // asked now, when the adviser picks this task up.
-    const inputs = t.questions.map((q) => el('input', { type: 'text', 'aria-label': q }));
+    // asked now, when the adviser opens this task. Answers can also be typed
+    // in the chat. Values are kept on the task so a redraw doesn't lose them.
+    task.answers ??= t.questions.map(() => '');
     return el('div', {},
       el('div', { class: 'label' }, 'To move this forward I need to know'),
-      t.questions.map((q, i) => el('div', { class: 'q' }, el('label', {}, q), inputs[i])),
-      el('button', { class: 'btn', onclick: () => queueTask(task, { answers: t.questions.map((q, i) => ({ q, a: inputs[i].value || '(no answer)' })) }) }, 'Send answers')
+      t.questions.map((q, i) => el('div', { class: 'q' }, el('label', {}, q),
+        el('input', { type: 'text', value: task.answers[i], oninput: (e) => (task.answers[i] = e.target.value) }))),
+      el('button', { class: 'btn', onclick: () => act(task, 'Here are my answers.', { answers: t.questions.map((q, i) => ({ q, a: task.answers[i] || '(no answer)' })) }) }, 'Send answers')
     );
   }
   if (t.kind === 'handoff') {
-    // Handoff: the adviser does the human step, tells Siesta the outcome, and
-    // Siesta picks it up from there.
-    const note = el('textarea', { rows: '3', placeholder: 'e.g. Sarah started at Barclays on 1 Nov as Programme Director, £82k' });
+    // Handoff: the adviser does the human step, tells Siesta the outcome in
+    // the chat, and Siesta picks it up from there.
     return el('div', {},
       el('div', { class: 'label' }, 'Your part'), el('p', {}, t.your_part),
       el('div', { class: 'label' }, 'Then I will'), el('p', {}, t.siesta_part),
-      el('div', { class: 'label' }, 'What did you find out?'), note,
-      el('p', {}),
-      el('button', { class: 'btn', onclick: () => note.value.trim() && queueTask(task, { handoffNote: note.value.trim() }) }, "I've done my part")
+      el('p', { class: 'next' }, "When you've done your part, tell me what you found out below.")
     );
   }
   if (t.kind === 'walkthrough') {
     return el('div', {},
       el('div', { class: 'label' }, 'Your part'), el('p', {}, t.your_part),
       el('div', { class: 'label' }, 'How I can help'), el('p', {}, t.siesta_part),
-      el('button', { class: 'btn', onclick: () => queueTask(task) }, 'Walk me through it')
+      el('button', { class: 'btn', onclick: () => act(task, 'Walk me through it.', {}) }, 'Walk me through it')
     );
   }
   // cannot (red)
   return el('div', {},
     el('div', { class: 'label' }, 'What I can do instead'), el('p', {}, t.alternative),
     t.your_part && [el('div', { class: 'label' }, 'Your part'), el('p', {}, t.your_part)],
-    el('button', { class: 'btn', onclick: () => queueTask(task, { doAlternative: true }) }, 'Do this instead')
+    el('button', { class: 'btn', onclick: () => act(task, 'Do that instead.', { doAlternative: true }) }, 'Do this instead')
   );
 }
 
-// Show whatever the run produced. Each block only appears if it has content.
-function renderResult(task) {
-  const r = task.result;
+// Draw one stored chat message.
+function renderMessage(task, m) {
+  if (m.role === 'you') return el('div', { class: 'msg you' }, m.text);
+  if (m.kind === 'result') return el('div', { class: 'msg siesta' }, el('div', { class: 'sheet' }, renderResult(task, m.result)));
+  if (m.kind === 'memory') return renderMemory(task, m);
+  if (m.kind === 'skill') return renderSkill(task, m);
+  if (m.kind === 'note') return el('div', { class: 'msg' }, confirmLine(m.text));
+  if (m.kind === 'error') return el('div', { class: 'msg siesta' }, el('p', { class: 'error' }, m.text));
+  if (m.kind === 'typing') return el('div', { class: 'msg siesta typing' }, spinner(), ' ', m.text);
+  return el('div', { class: 'msg siesta', html: md(m.text) });
+}
+
+// Offer to save useful things to company memory or turn repeat work into a
+// skill. Nothing is saved unless the adviser clicks (guardrail from the doc).
+// The choice is stored on the message, so it survives redraws.
+function renderMemory(task, m) {
+  return el('div', { class: 'msg siesta' },
+    el('p', {}, '💡 Worth remembering for next time?'),
+    el('blockquote', {}, m.text),
+    m.choice ? confirmLine(m.choice) : el('div', { class: 'actions' },
+      el('button', { class: 'btn', onclick: async () => { await api('/api/memory', { type: 'memory', text: m.text }); m.choice = "Saved to company memory. I'll use it from now on."; refresh(task); } }, 'Save to company memory'),
+      el('button', { class: 'btn ghost', onclick: () => { m.choice = 'Not saved.'; refresh(task); } }, 'No thanks')
+    )
+  );
+}
+
+function renderSkill(task, m) {
+  return el('div', { class: 'msg siesta' },
+    el('p', {}, '🔁 This looks like repeat work. Turn it into a skill the whole firm can run by name?'),
+    el('blockquote', {}, el('strong', {}, m.skill.name), ': ', m.skill.description),
+    m.choice ? confirmLine(m.choice) : el('div', { class: 'actions' },
+      el('button', { class: 'btn', onclick: async () => { await api('/api/memory', { type: 'skill', skill: m.skill }); m.choice = `Skill "${m.skill.name}" created.`; refresh(task); } }, 'Create skill'),
+      el('button', { class: 'btn ghost', onclick: () => { m.choice = 'Skipped.'; refresh(task); } }, 'Not now')
+    )
+  );
+}
+
+// Show whatever a run produced. Each block only appears if it has content.
+function renderResult(task, r) {
   return el('div', {},
     el('h3', {}, r.headline),
     el('div', { html: md(r.body) }),
     r.steps.length > 0 && el('ol', { class: 'steps' }, r.steps.map((s) => el('li', {}, el('label', {}, el('input', { type: 'checkbox' }), ' ', el('span', { html: md(s).replace(/<\/?p>/g, '') }))))),
     r.email && renderEmail(r.email),
-    r.proposals.length > 0 && renderProposals(r.proposals),
+    r.proposals.length > 0 && renderProposals(task, r.proposals),
     r.next_step && el('p', { class: 'next' }, '→ ', r.next_step),
     r.sources.length > 0 && el('details', { class: 'sources' },
       el('summary', {}, `Sources (${r.sources.length})`),
@@ -610,27 +731,27 @@ function renderResult(task) {
   );
 }
 
-// An email DRAFT. Editable, then copied or opened in the adviser's own mail
-// app. Siesta never sends: the adviser presses send (per the capabilities doc).
+// An email DRAFT. Editable (edits are kept on the email object so a redraw
+// doesn't lose them), then copied or opened in the adviser's own mail app.
+// Siesta never sends: the adviser presses send (per the capabilities doc).
 function renderEmail(email) {
-  const to = el('input', { type: 'text', value: email.to });
-  const subject = el('input', { type: 'text', value: email.subject });
-  const body = el('textarea', {}, email.body);
-  const mailto = () => `mailto:${encodeURIComponent(to.value)}?subject=${encodeURIComponent(subject.value)}&body=${encodeURIComponent(body.value)}`;
+  const field = (key, tag = 'input') => el(tag, { type: tag === 'input' ? 'text' : null, value: email[key], oninput: (e) => (email[key] = e.target.value) });
+  const mailto = () => `mailto:${encodeURIComponent(email.to)}?cc=${encodeURIComponent(email.cc)}&subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.body)}`;
   return el('div', { class: 'email' },
     el('div', { class: 'label' }, 'Draft email: you send it'),
-    el('div', { class: 'row' }, 'To', to),
-    el('div', { class: 'row' }, 'Subject', subject),
-    body,
+    el('div', { class: 'row' }, 'To', field('to')),
+    el('div', { class: 'row' }, 'Cc', field('cc')),
+    el('div', { class: 'row' }, 'Subject', field('subject')),
+    field('body', 'textarea'),
     buttonRow([
       ['Open in my mail app', () => (window.location.href = mailto())],
-      ['Copy', async (row) => { await navigator.clipboard.writeText(`Subject: ${subject.value}\n\n${body.value}`); row.append(confirmLine('Copied')); }, 'btn ghost'],
+      ['Copy', async (row) => { await navigator.clipboard.writeText(`Subject: ${email.subject}\n\n${email.body}`); row.append(confirmLine('Copied')); }, 'btn ghost'],
     ])
   );
 }
 
 // Proposed record changes. Nothing changes until the adviser approves each one.
-function renderProposals(proposals) {
+function renderProposals(task, proposals) {
   return el('div', { class: 'section' },
     el('div', { class: 'label' }, 'Proposed record updates: approve to apply'),
     proposals.map((p) =>
@@ -639,22 +760,22 @@ function renderProposals(proposals) {
         el('div', { class: 'old' }, p.current_value || '(empty)'),
         el('div', { class: 'new' }, p.proposed_value),
         el('small', {}, 'Source: ', p.source),
-        renderDecision(p)
+        renderDecision(task, p)
       )
     )
   );
 }
 
-function renderDecision(p) {
+function renderDecision(task, p) {
   if (p.decision === 'approved') return el('div', { class: 'actions' }, el('span', { class: 'chip green' }, '✓ Approved'));
   if (p.decision === 'rejected') return el('div', { class: 'actions' }, el('span', { class: 'chip' }, 'Rejected'));
   return el('div', { class: 'actions' },
     el('button', { class: 'btn', onclick: async () => {
       await api('/api/approve', { proposal: p });
       p.decision = 'approved';
-      say(confirmLine(`Approved: ${p.member}, ${p.field} is now "${p.proposed_value}".`));
-      refresh();
+      task.messages.push({ role: 'siesta', kind: 'note', text: `Approved: ${p.member}, ${p.field} is now "${p.proposed_value}".` });
+      refresh(task);
     } }, 'Approve'),
-    el('button', { class: 'btn ghost', onclick: () => { p.decision = 'rejected'; refresh(); } }, 'Reject')
+    el('button', { class: 'btn ghost', onclick: () => { p.decision = 'rejected'; refresh(task); } }, 'Reject')
   );
 }

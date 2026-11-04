@@ -33,34 +33,42 @@
   </div>
 
   <aside id="siesta" aria-label="Siesta AI">
-    <!-- Tabs copied from the real panel. Only "Conversation" is live. -->
+    <!-- Tabs: "Actions" is copied from the real panel (not live here).
+         "To-Do List" replaces the real panel's History tab. -->
     <nav class="tabs">
-      <span class="tab">✦ Actions</span>
-      <span class="tab active">Conversation</span>
-      <span class="tab">↺ History</span>
+      <button type="button" class="tab" disabled>✦ Actions</button>
+      <button type="button" class="tab" data-tab="conversation">Conversation</button>
+      <button type="button" class="tab" data-tab="todo">To-Do List<span id="todo-badge" class="badge" hidden></span></button>
     </nav>
 
     <div class="body">
-      <!-- The to-do board: one card per pasted line, draggable to set priority
-           and editable. Pinned above the chat so it's always to hand. -->
-      <section id="board" hidden>
+      <!-- Conversation: Siesta's general chat (welcome, updates, notifications). -->
+      <section id="view-conversation" class="view">
+        <main id="log" aria-live="polite"></main>
+      </section>
+
+      <!-- To-Do List: the whole list, full height (drag, edit, add). -->
+      <section id="todo-list" class="view" hidden>
         <header class="board-head">
           <span>Your to-do list</span>
           <span class="legend"><i class="dot green"></i>Siesta <i class="dot yellow"></i>Needs you <i class="dot red"></i>Can't</span>
         </header>
+        <div id="banner"></div>
         <ol id="cards"></ol>
         <button type="button" id="add-task" class="add-task">+ Add task</button>
       </section>
 
-      <!-- Conversation with Siesta. -->
-      <main id="log" aria-live="polite"></main>
-
-      <!-- Task detail: slides over the board and chat when a card is clicked. -->
-      <section id="detail" hidden></section>
+      <!-- One task: its brief (questions, actions needed) and its own chat. -->
+      <section id="task-view" class="view" hidden>
+        <header id="task-head" class="task-head"></header>
+        <main id="task-log" aria-live="polite"></main>
+      </section>
     </div>
 
+    <!-- One composer, whose job depends on the view: add tasks (Conversation)
+         or talk to Siesta about one task (task view). -->
     <form id="composer">
-      <textarea id="input" rows="3" placeholder="Paste or type more tasks, one per line…"></textarea>
+      <textarea id="input" rows="3"></textarea>
       <div class="composer-row">
         <button type="button" id="demo" class="pill">Use demo list</button>
         <span class="hint">Ctrl/⌘ + Enter to send</span>
@@ -69,7 +77,7 @@
     </form>
   </aside>
 
-  <!-- app.js first (state, helpers, board, chat), then upload.js (the
+  <!-- app.js first (state, helpers, list, chats), then upload.js (the
        "get client information in" walkthrough). -->
   <script src="/app.js"></script>
   <script src="/upload.js"></script>

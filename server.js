@@ -22,7 +22,7 @@
 //        POST /api/triage    to-do lines        -> green / yellow / red cards
 //        POST /api/extract   one uploaded file  -> fields found, with citations
 //        POST /api/finalise  adviser's reviewed fields -> the client record
-//        POST /api/run       one task (+inputs) -> drafts, answers, proposals
+//        POST /api/run       one turn of a task's chat -> drafts, answers, proposals
 //        POST /api/approve   adviser approves a proposed record change
 //        POST /api/memory    adviser saves a suggested memory or skill
 //        GET  /api/state     what's in the session (handy for debugging)
@@ -353,7 +353,7 @@ const RUN_SCHEMA = obj({
   body: str('The main result. Plain text; you may use "## " headings, "- " bullets and **bold**. Keep it scannable.'),
   sources: arr(obj({ file: str('File path exactly as in [source: ...] or (from ...)'), quote: str('Short exact quote from that file') }), 'Citations backing the result'),
   email: {
-    anyOf: [obj({ to: str('Recipient address from the documents, or "" if unknown'), subject: str(''), body: str('Email body, signed off as Matthew') }), { type: 'null' }],
+    anyOf: [obj({ to: str('Recipient address from the documents, or "" if unknown'), cc: str('Cc addresses, comma-separated, or ""'), subject: str(''), body: str('Email body, signed off as Matthew') }), { type: 'null' }],
     description: 'An email DRAFT for the adviser to send themselves, or null',
   },
   proposals: arr(
@@ -377,9 +377,10 @@ You are now doing ONE task from the adviser's to-do list. Use only the client re
 - Record changes are proposals only; the adviser approves them.
 - For a walkthrough, give clear numbered steps from the user guide excerpt and remind them you can't click for them.
 - If asked to do the alternative to something you can't do, do that alternative and briefly say why the original isn't possible.
+- This is a chat about ONE task. If the adviser sends a new message, answer it directly. If they ask for changes to a draft or proposal, return the complete revised version. Don't repeat sources, suggestions or proposals they've already dealt with unless asked.
 - Look for things worth keeping. Suggest a memory when the task reveals a durable fact or preference that would help next time (e.g. a provider's usual turnaround, how a client prefers to be contacted, the firm's chasing rule). Suggest a skill when the task is work an adviser repeats across clients (e.g. annual review prep, provider chasers, post-call record updates). Leave them empty only for genuine one-offs.`;
 
-async function runTask({ task, answers, handoffNote, doAlternative }) {
+async function runTask({ task, answers, handoffNote, doAlternative, message, history }) {
   const t = task.triage;
   // Everything the adviser supplied goes into both the search query and the
   // prompt, so their answers shape what we look up as well as what we write.
@@ -387,14 +388,21 @@ async function runTask({ task, answers, handoffNote, doAlternative }) {
     answers?.length ? `The adviser answered your questions:\n${answers.map((a) => `Q: ${a.q}\nA: ${a.a}`).join('\n')}` : '',
     handoffNote ? `The adviser has done their part and reports: "${handoffNote}". Now do your part.` : '',
     doAlternative ? `You can't do this task as written. Do the alternative instead: ${t.alternative}` : '',
+    message ? `The adviser's new message in this task's chat: "${message}"` : '',
   ].filter(Boolean).join('\n\n');
+
+  // Each task is its own chat session: earlier turns come with every request
+  // so Siesta can handle follow-ups like "make it shorter".
+  const conversation = history?.length
+    ? `CONVERSATION SO FAR ON THIS TASK:\n${history.map((h) => `${h.role.toUpperCase()}: ${h.text}`).join('\n\n')}\n\n`
+    : '';
 
   const hits = search(`${task.text} ${extra}`);
   return askModel({
     system: RUN_SYSTEM,
     schemaName: 'task_result',
     schema: RUN_SCHEMA,
-    user: `TASK: ${task.text}\nHOW YOU SORTED IT: ${t.kind}. ${t.reason}\nYOUR PART: ${t.siesta_part}\n\n${extra}\n\n${sessionContext()}\n\nDOCUMENT EXCERPTS:\n${formatChunks(hits)}\n\nCAPABILITIES DOCUMENT:\n${CAPABILITIES}`,
+    user: `TASK: ${task.text}\nHOW YOU SORTED IT: ${t.kind}. ${t.reason}\nYOUR PART: ${t.siesta_part}\n\n${conversation}${extra}\n\n${sessionContext()}\n\nDOCUMENT EXCERPTS:\n${formatChunks(hits)}\n\nCAPABILITIES DOCUMENT:\n${CAPABILITIES}`,
   });
 }
 

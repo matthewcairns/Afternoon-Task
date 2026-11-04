@@ -29,15 +29,17 @@ Open http://localhost:3000. **Every page load is a fresh first login**: the sess
 ### Demo script
 
 1. **Welcome pop-up:** paste the to-do list (bulleted lists copied from Word work), then click **Get started**. **Skip** closes it to explore.
-2. **Sorted:** every card is yellow or red, because nothing is in Afternoon yet. A **Start here** card appears at the top: *Get your client information into Afternoon*.
+2. **To-Do List tab** (it replaces the panel's History tab): the list opens at full height and gets sorted. Every card is yellow or red, because nothing is in Afternoon yet. A **Start here** card appears at the top: *Get your client information into Afternoon*.
 3. **Fix the list:** drag to reorder, ✎ to edit a card (it gets sorted again), × to delete, **+ Add task** for anything missed.
-4. **Upload:** open *Start here*. It lists what each task is waiting for, then walks through the platform's steps. Use the files in **`demo-uploads/`**.
+4. **Each task is its own chat with Siesta.** Open a card: the first message is the task's brief (why it's that colour, how Afternoon helps anyway, and the questions or actions needed), and below it you talk to Siesta about just that task.
+5. **Upload:** open *Start here*. It lists what each task is waiting for, then walks through the platform's steps. Use the files in **`demo-uploads/`**.
    - **Batch 1 (5 files):** fact find, valuations CSV, 2025 review transcript, actions CSV, Aviva emails. Upload, **Process data**, **Add everything as new**, **Finalise review**.
    - Siesta sorts the list again, and three tasks turn 🟢: review prep, the pension question and the Aviva chaser.
    - **Batch 2 (optional):** `sarah-voicemail-file-note-2026-10-28.txt` shows a **conflict**: the record says Northgate, but the voicemail says she's left.
-5. **Start working:** Siesta does the green tasks top-down, producing a review pack, a cited answer and a chaser draft.
-6. **Yellow and red:** "Call Sarah" is a handoff. Record the call outcome, then approve the proposed updates. "Outlook" gets a walkthrough. The ISA task can't be done, so it offers an allowance check instead.
-7. **Memory and skills:** save suggested memories or skills when they're offered.
+6. **Start working** (top of the list): Siesta does the green tasks top-down in the background, producing a review pack, a cited answer and a chaser draft. The Conversation tab pings you as each one finishes.
+7. **Follow up in a task's chat**, e.g. open the Aviva chaser and type "Make it shorter and copy in Sarah". Siesta returns a revised draft with Sarah in Cc.
+8. **Yellow and red:** "Call Sarah" is a handoff: type what Sarah said into its chat, then approve the proposed updates. "Outlook" gets a walkthrough. The ISA task can't be done, so it offers an allowance check instead.
+9. **Memory and skills:** suggestions appear in the task chat they came from; save them with one click.
 
 ---
 
@@ -52,8 +54,10 @@ Open http://localhost:3000. **Every page load is a fresh first login**: the sess
 | 🟡 yellow | `handoff` | You do a first step (e.g. phone the client), then Siesta takes over |
 | 🔴 red | `cannot` | Siesta can't do it: you get the reason and an alternative it *can* do |
 
-- **Every card also says how Afternoon helps anyway**, even where the AI can't.
-- **Questions** are generated at once during sorting, but each is only asked when you click its yellow card.
+- **Three tabs:** *Conversation* (Siesta's general chat and progress pings), *To-Do List* (the full list, with a badge counting tasks waiting for you), and inside it **one chat session per task**.
+- **Every task's brief also says how Afternoon helps anyway**, even where the AI can't.
+- **Questions** are generated at once during sorting, but each is only asked when you open its task. Answer in the boxes or just reply in the chat.
+- **Follow-ups:** every turn sends that task's history, so you can ask for changes ("shorter", "add Tom") and get a complete revised draft.
 - **Getting data in** follows Afternoon's own flow (`data/guide/afternoon-user-guide-adding-client-data.md`):
   - choose up to 5 files and pick an upload model for each (Fact Find, Core, DARSCO, IO Fund Valuation; Siesta suggests one);
   - each file goes from *Extracting* to *Ready*, then **Process data**;
@@ -85,7 +89,7 @@ Open http://localhost:3000. **Every page load is a fresh first login**: the sess
 | File | What it is |
 |---|---|
 | `server.js` | Static files, API routes, session state (record, documents), keyword search, OpenAI calls. |
-| `public/app.js` | Welcome pop-up, list parsing, board (drag/edit), chat, work queue, task detail. One `tasks` array in priority order, and a `refresh()` that redraws everything from it. |
+| `public/app.js` | Welcome pop-up, tabs, list parsing, the To-Do List (drag/edit), the work queue and each task's chat. One `tasks` array in priority order (each task holds its own `messages`), and a `refresh()` that redraws from it. |
 | `public/upload.js` | The *Start here* card: the walkthrough and the upload, extract, review and finalise steps. |
 | `public/index.html`, `styles.css` | Markup and styling. The screenshot is the page background. |
 | `docs/afternoon-capabilities.md` | Source of truth for what Siesta can and can't do; sent with every request. |
@@ -98,6 +102,7 @@ Open http://localhost:3000. **Every page load is a fresh first login**: the sess
 - **Grounded in the capabilities doc.** The model sorts tasks against Afternoon's documented rules, not its own idea of what an assistant can do.
 - **The model chooses a *kind*; the code chooses the *colour*.** One decision for the model and one fixed rule in code, so a card can't say "cannot" and still be green.
 - **Structured outputs (JSON schema)** for sorting, extraction and task results, so the UI just displays the fields.
+- **One chat per task.** A to-do list is many separate jobs, so each one gets its own focused session (brief, questions, drafts, follow-ups), instead of everything competing in one cramped chat. The server stays stateless per turn: the browser sends that task's history with each message.
 - **Re-sort after every upload.** Each finalised batch re-checks every open card. That's how tasks turn green, and it also corrects earlier misjudgements.
 - **Citations everywhere.** Extracted fields and task results quote the exact source text plus its file.
 - **Human approval everywhere.** Extracted fields need Add/Update, record changes need Approve, and emails are only drafts.
