@@ -270,3 +270,4 @@ details.sources cite { display: block; color: #8a7766; font-size: 11px; font-sty
 .cite cite { display: block; color: #8a7766; font-size: 11px; font-style: normal; }
 .sheet .confirm { color: #13724a; }
 .modal .intro { font-size: 15px; color: var(--text); }
+.banner .banner-cta { font-size: 14.5px; font-weight: 700; color: #fff; margin-bottom: 6px; }

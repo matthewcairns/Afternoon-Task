@@ -28,7 +28,7 @@ Open http://localhost:3000. **Every page load is a fresh first login**: the sess
 
 ### Demo script
 
-1. **Welcome pop-up:** paste the to-do list (bulleted lists copied from Word work), then click **Get started**. **Skip** closes it to explore.
+1. **Welcome pop-up:** paste the to-do list (bulleted lists copied from Word work), then click **Get Started**. **Skip** closes it to explore.
 2. **To-Do List tab** (it replaces the panel's History tab): the list opens at full height and gets sorted. Every card is yellow or red, because nothing is in Afternoon yet. A **Start here** card appears at the top: *Get your client information into Afternoon*.
 3. **Fix the list:** drag to reorder, ✎ to edit a card (it gets sorted again), × to delete, **+ Add task** for anything missed.
 4. **Each task is its own chat with Siesta.** Open a card: the first message is the task's brief (why it's that colour, how Afternoon helps anyway, and the questions or actions needed), and below it you talk to Siesta about just that task.

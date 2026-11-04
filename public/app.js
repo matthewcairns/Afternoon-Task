@@ -245,7 +245,7 @@ $('#welcome-skip').addEventListener('click', () => {
 function greet() {
   say(
     el('p', {}, 'Hi Matthew, welcome to Afternoon 👋'),
-    el('p', {}, "Let's get some of your real work done. I'll show you what I can take off your plate, what I need from you first, and what only you can do (with how Afternoon helps anyway).")
+    el('p', {}, "Let's get some of your real work done. I'll show you what I can take off your plate, what I need from you first, and what only you can do. We can go through each task step by step.")
   );
 }
 
@@ -336,11 +336,13 @@ function renderBanner() {
   const ready = real.filter((t) => t.status === 'ready').length;
   const upload = tasks.find((t) => t.id === 'upload' && t.status === 'needs_you');
   $('#banner').replaceChildren(el('div', { class: 'banner' },
+    // The headline instruction: each task is a conversation, not a form.
+    !sorting && el('p', { class: 'banner-cta' }, '💬 Click on a task to talk it through with Siesta'),
     sorting
       ? el('p', {}, spinner(), ' Sorting into what I can do, what needs you, and what I can\'t…')
       : el('p', {}, `🟢 ${count('green')} Siesta can do · 🟡 ${count('yellow')} need you · 🔴 ${count('red')} can't`),
     upload && el('p', {}, 'Start with the first card: your client information unlocks most of the others.'),
-    !sorting && el('p', { class: 'small' }, 'Drag to set priority, ✎ to fix anything I misread. Open a card to see what I need and chat about it.'),
+    !sorting && el('p', { class: 'small' }, 'Each task opens its own chat, with my questions and the actions needed. Drag to set priority, ✎ to fix anything I misread.'),
     started && meanwhile && el('p', {}, 'Meanwhile: ', meanwhile),
     !started && ready > 0 && el('div', { class: 'actions' }, el('button', { class: 'btn', onclick: startWork }, `Start working (${ready})`))
   ));
