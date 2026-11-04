@@ -1,0 +1,16 @@
+FICTIONAL, SYNTHETIC EMAIL THREAD — from Matthew's connected Outlook mailbox
+Subject thread: Transfer out — Sarah Henderson — policy AV-PP-7731904
+
+--- 18 Aug 2026, Matthew Cairns -> transfers@aviva-example.co.uk
+Please find attached the signed transfer discharge forms for Sarah Henderson's personal pension AV-PP-7731904, to be transferred to Transact SIPP TR-SIPP-55120 via Origo Options. Letter of authority enclosed.
+
+--- 21 Aug 2026, Aviva Pension Transfers Team (transfers@aviva-example.co.uk) -> Matthew Cairns
+Thank you. We've received your request and logged it as case reference AVT-448812. Transfers normally complete within 10–15 working days once all requirements are met.
+
+--- 22 Sep 2026, Matthew Cairns -> transfers@aviva-example.co.uk
+Following up on case AVT-448812 — we haven't seen the funds arrive at Transact. Could you confirm the status?
+
+--- 30 Sep 2026, Aviva Pension Transfers Team -> Matthew Cairns
+Apologies for the delay. We needed an updated signature on the discharge form; this was received on 29 Sep. We expect to complete within 10 working days.
+
+--- No further correspondence. As at 4 Nov 2026 the Transact SIPP (TR-SIPP-55120) still shows a value of £0 and the Aviva policy still shows £41,250.

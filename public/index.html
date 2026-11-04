@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Siesta To-Do Onboarding</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<!--
+  Layout: the whole page is a static screenshot of Afternoon (set as the body
+  background in styles.css). Only the right-hand Siesta panel below is real.
+  WHY: the prototype is about the onboarding moment in the panel, not about
+  rebuilding Afternoon. It also shows how this could slot in: a self-contained
+  panel plus the small API in server.js.
+-->
+<body>
+  <aside id="siesta" aria-label="Siesta AI">
+    <!-- Tabs copied from the real panel. Only "Conversation" is live. -->
+    <nav class="tabs">
+      <span class="tab">✦ Actions</span>
+      <span class="tab active">Conversation</span>
+      <span class="tab">↺ History</span>
+    </nav>
+
+    <div class="body">
+      <!-- The to-do board: one card per pasted line, draggable to set priority.
+           Pinned above the chat so it's always to hand while Siesta works. -->
+      <section id="board" hidden>
+        <header class="board-head">
+          <span>Your to-do list</span>
+          <span class="legend"><i class="dot green"></i>Siesta <i class="dot yellow"></i>Needs you <i class="dot red"></i>Can't</span>
+        </header>
+        <ol id="cards"></ol>
+      </section>
+
+      <!-- Conversation with Siesta. -->
+      <main id="log" aria-live="polite"></main>
+
+      <!-- Task detail: slides over the board and chat when a card is clicked. -->
+      <section id="detail" hidden></section>
+    </div>
+
+    <form id="composer">
+      <textarea id="input" rows="3" placeholder="Paste your to-do list, one task per line…"></textarea>
+      <div class="composer-row">
+        <button type="button" id="demo" class="pill">Use demo list</button>
+        <span class="hint">Ctrl/⌘ + Enter to send</span>
+        <button type="submit" class="send" aria-label="Send">↑</button>
+      </div>
+    </form>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>

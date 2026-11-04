@@ -1,0 +1,11 @@
+{
+  "name": "siesta-todo-onboarding",
+  "version": "0.1.0",
+  "description": "Prototype: Siesta turns an adviser's real to-do list into their Afternoon onboarding.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --env-file=.env server.js"
+  }
+}
