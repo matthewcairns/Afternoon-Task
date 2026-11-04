@@ -9,12 +9,16 @@
 //
 // A task's life:
 //   sorting   -> sent to /api/triage, waiting for a colour
-//   ready     -> green: Siesta can do it alone, waiting for "Start"
-//   needs_you -> yellow/red: waiting for the adviser to click the card
+//   ready     -> green: Siesta can do it alone, waiting for "Start working"
+//   needs_you -> yellow/red: waiting for the adviser (upload, answer, call…)
 //   queued    -> in Siesta's work queue (worked top to bottom)
 //   working   -> /api/run in progress
 //   done      -> result ready to review (drafts, proposals, answers)
 //   error     -> something failed; the adviser can retry
+//
+// The special "upload" card (see upload.js) walks a first-time adviser through
+// getting client information into Afternoon. Once they finalise an upload,
+// every open task is sorted again, and some turn green.
 // =============================================================================
 
 const tasks = [];
@@ -24,6 +28,7 @@ let busy = false; // is Siesta currently running a task? (one at a time)
 let meanwhile = ''; // "what you can do meanwhile" tip from the last triage
 let openTaskId = null; // which task's detail view is showing, if any
 let dragId = null; // the card currently being dragged
+let editingId = null; // the card whose text is being edited, if any
 
 const DEMO_LIST = `Prep for the Hendersons' annual review on Thursday
 What did we agree about Sarah Henderson's pension contributions last meeting?
@@ -34,14 +39,16 @@ Call Sarah to confirm her new employer, then update her record`;
 
 // Card wording for each kind while it waits for the adviser.
 const WAITING_TEXT = {
+  needs_upload: 'Needs client info',
   needs_answers: 'Needs your answers',
   walkthrough: 'You do this, I guide',
   handoff: 'Your step first',
   cannot: "Can't do: see alternative",
+  upload: 'Start here',
 };
 
 // -----------------------------------------------------------------------------
-// Tiny helpers
+// Tiny helpers (also used by upload.js)
 // -----------------------------------------------------------------------------
 const $ = (sel) => document.querySelector(sel);
 
@@ -51,9 +58,11 @@ const $ = (sel) => document.querySelector(sel);
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
+    if (value === null || value === undefined || value === false) continue; // lets us write disabled: cond ? '' : null
     if (key === 'class') node.className = value;
     else if (key === 'html') node.innerHTML = value; // only ever used with md(), which escapes first
     else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (key === 'value') node.value = value;
     else node.setAttribute(key, value);
   }
   for (const child of children.flat()) {
@@ -83,7 +92,7 @@ function md(text) {
 
 // POST JSON to our own server. The browser only ever talks to localhost; the
 // server holds the OpenAI key.
-async function api(path, body) {
+async function api(path, body = {}) {
   const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Request failed');
@@ -119,7 +128,39 @@ function buttonRow(buttons) {
 const confirmLine = (text) => el('div', { class: 'confirm' }, '✓ ', text);
 
 // -----------------------------------------------------------------------------
-// 1. Pasting the to-do list
+// 1. First login: the welcome pop-up
+// -----------------------------------------------------------------------------
+// Every page load is treated as a first login: the server session is wiped and
+// the pop-up appears. WHY a pop-up rather than a tour? The quickest route to
+// value is the adviser's own work, so the very first thing we ask for is it.
+api('/api/reset');
+
+$('#welcome-demo').addEventListener('click', () => ($('#welcome-input').value = DEMO_LIST));
+
+$('#welcome-start').addEventListener('click', () => {
+  const text = $('#welcome-input').value.trim();
+  if (!text) return $('#welcome-input').focus();
+  $('#welcome').hidden = true;
+  greet();
+  addTasksFromText(text);
+});
+
+// Skip: the adviser just wants to look around. Siesta stays available.
+$('#welcome-skip').addEventListener('click', () => {
+  $('#welcome').hidden = true;
+  greet();
+  say(el('p', {}, "No problem, have a look around. Whenever you're ready, paste your to-do list below and I'll start on it."));
+});
+
+function greet() {
+  say(
+    el('p', {}, 'Hi Matthew, welcome to Afternoon 👋'),
+    el('p', {}, "Let's get some of your real work done. I'll show you what I can take off your plate, what I need from you first, and what only you can do (with how Afternoon helps anyway).")
+  );
+}
+
+// -----------------------------------------------------------------------------
+// 2. Turning pasted text into tasks
 // -----------------------------------------------------------------------------
 $('#demo').addEventListener('click', () => {
   $('#input').value = DEMO_LIST;
@@ -131,48 +172,77 @@ $('#input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('#composer').requestSubmit();
 });
 
-$('#composer').addEventListener('submit', async (e) => {
+$('#composer').addEventListener('submit', (e) => {
   e.preventDefault();
   const text = $('#input').value.trim();
   if (!text) return;
   $('#input').value = '';
-  youSay(text);
+  addTasksFromText(text);
+});
 
-  // Each line becomes one task. Strip bullets and numbers, because people
-  // paste from Notes, Outlook or Word, where lists usually start with "-", "•" or "1.".
-  const lines = text.split('\n').map((l) => l.replace(/^\s*([-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+// Split pasted text into one task per line. Word is the awkward case: a
+// pasted Word list can bring Windows line endings, non-breaking spaces,
+// tabs, and bullet characters ("•", "o", "§", or Symbol-font characters
+// like U+F0B7), plus numbering such as "1." or "a)". We strip all of these.
+// Short heading lines ending in ":" (e.g. "To do today:") are dropped too.
+const BULLET = /^\s*(?:[-–—*•◦▪▫●○■□➢➤►✓✔§·]|o(?=\s)|\(?\d{1,2}[.)]|\(?[a-z][.)](?=\s))\s*/;
+
+function parseTaskLines(text) {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[   ]/g, ' ')
+    .split('\n')
+    .map((line) => line.replace(BULLET, '').replace(/\s+/g, ' ').trim())
+    .filter((line) => line && !(line.endsWith(':') && line.length < 40));
+}
+
+async function addTasksFromText(text) {
+  youSay(text);
+  const lines = parseTaskLines(text);
+  if (!lines.length) return;
   const newTasks = lines.map((line) => ({ id: `t${nextId++}`, text: line, status: 'sorting' }));
   tasks.push(...newTasks);
   $('#board').hidden = false;
   refresh();
 
   const thinking = say(spinner(), ` Sorting ${newTasks.length} task${newTasks.length > 1 ? 's' : ''} into what I can do, what needs you, and what I can't…`);
+  const ok = await sortTasks(newTasks);
+  thinking.remove();
+  if (ok) summariseTriage(newTasks);
+}
+
+// Send tasks to /api/triage and apply the result. Used for a new list, an
+// edited card, an added card, and re-sorting after an upload.
+async function sortTasks(list) {
+  list.forEach((t) => (t.status = 'sorting'));
+  refresh();
   try {
-    const result = await api('/api/triage', { tasks: newTasks.map(({ id, text }) => ({ id, text })) });
+    const result = await api('/api/triage', { tasks: list.map(({ id, text }) => ({ id, text })) });
     for (const t of result.tasks) {
       const task = tasks.find((x) => x.id === t.id);
       if (!task) continue;
       task.triage = t;
       // Green tasks wait for "Start" (or join the queue straight away if work
-      // has already started). Yellow and red wait for the adviser to click them.
+      // has already started). Yellow and red wait for the adviser.
       task.status = t.colour === 'green' ? (started ? 'queued' : 'ready') : 'needs_you';
     }
     meanwhile = result.meanwhile;
-    thinking.remove();
-    summariseTriage(newTasks);
+    ensureUploadCard();
     refresh();
     if (started) processQueue();
+    return true;
   } catch (err) {
-    thinking.remove();
-    newTasks.forEach((t) => (t.status = 'error'));
-    say(el('p', { class: 'error' }, `Sorry, I couldn't sort that list: ${err.message}`));
+    list.forEach((t) => { t.status = 'error'; t.error = err.message; });
+    say(el('p', { class: 'error' }, `Sorry, I couldn't sort that: ${err.message}`));
     refresh();
+    return false;
   }
-});
+}
 
-// After sorting: a short summary, how to use the board, and a Start button.
+// After sorting: a short summary, how to use the board, and what to do first.
 function summariseTriage(newTasks) {
   const count = (colour) => newTasks.filter((t) => t.triage?.colour === colour).length;
+  const needData = newTasks.filter((t) => t.triage?.kind === 'needs_upload').length;
   say(
     el('p', {}, `I've sorted your ${newTasks.length} tasks:`),
     el('ul', {},
@@ -180,8 +250,12 @@ function summariseTriage(newTasks) {
       el('li', {}, `🟡 ${count('yellow')} need a bit of you`),
       el('li', {}, `🔴 ${count('red')} I can't do, but I'll show you what I can do instead`)
     ),
-    el('p', {}, 'Drag the cards to set priority: I work through them from the top. Click any yellow or red card to see what I need from you.'),
-    !started && buttonRow([['Start working', (row) => { row.remove(); startWork(); }]])
+    needData > 0 && el('p', {}, `${needData} of them need your client information in Afternoon first. I've added a card at the top to walk you through it: it's the quickest way to turn them green.`),
+    el('p', {}, 'Drag the cards to set priority, and use ✎ to fix anything I misread. Click a yellow or red card to see what I need from you.'),
+    buttonRow([
+      needData > 0 && ['Show me how to add client info', () => openDetail('upload')],
+      !started && count('green') > 0 && ['Start working', (row) => { row.remove(); startWork(); }],
+    ].filter(Boolean))
   );
 }
 
@@ -197,8 +271,30 @@ function startWork() {
   processQueue();
 }
 
+// Called by upload.js once an upload is finalised: sort every open task again
+// against the newly filled record, and say which ones turned green.
+async function resortAfterUpload() {
+  // Every open card is re-checked (red ones too: new information can change
+  // what's possible, and it costs one request either way).
+  const open = tasks.filter((t) => t.id !== 'upload' && ['needs_you', 'ready', 'error'].includes(t.status));
+  if (!open.length) return;
+  const before = new Map(open.map((t) => [t.id, t.triage?.colour]));
+  const thinking = say(spinner(), ' Checking your list again now the information is in Afternoon…');
+  const ok = await sortTasks(open);
+  thinking.remove();
+  if (!ok) return;
+  const turned = open.filter((t) => t.triage.colour === 'green' && before.get(t.id) !== 'green');
+  say(
+    turned.length
+      ? [el('p', {}, `🟢 ${turned.length} task${turned.length > 1 ? 's' : ''} turned green:`), el('ul', {}, turned.map((t) => el('li', {}, t.text)))]
+      : el('p', {}, "Nothing new turned green yet. Open a yellow card to see what's still missing."),
+    turned.length > 0 && !started && buttonRow([['Start working', (row) => { row.remove(); startWork(); }]]),
+    turned.length > 0 && started && el('p', {}, "They're in my queue now.")
+  );
+}
+
 // -----------------------------------------------------------------------------
-// 2. The work queue: Siesta does one task at a time, top of the board first
+// 3. The work queue: Siesta does one task at a time, top of the board first
 // -----------------------------------------------------------------------------
 // WHY re-check the order each time? If the adviser drags a card while Siesta
 // is busy, the next task picked is whatever is highest on the board THEN.
@@ -239,7 +335,7 @@ function announceIfAllDone() {
   announcedAllDone = true;
   const waiting = tasks.filter((t) => t.status === 'needs_you');
   say(
-    el('p', {}, 'That\'s everything I can do on my own for now. Please review the drafts before anything goes out.'),
+    el('p', {}, "That's everything I can do on my own for now. Please review the drafts before anything goes out."),
     waiting.length > 0 && el('p', {}, `Still waiting for you: ${waiting.map((t) => `"${t.text}"`).join(', ')}.`)
   );
 }
@@ -281,13 +377,13 @@ function suggestMemoryAndSkill(task) {
 function queueTask(task, inputs = {}) {
   task.inputs = inputs;
   task.status = 'queued';
-  say(el('p', {}, 'Thanks, I\'ve added ', el('strong', {}, task.text), ' to my queue.'));
+  say(el('p', {}, "Thanks, I've added ", el('strong', {}, task.text), ' to my queue.'));
   closeDetail();
   processQueue();
 }
 
 // -----------------------------------------------------------------------------
-// 3. The board: draggable cards
+// 4. The board: draggable, editable cards
 // -----------------------------------------------------------------------------
 function refresh() {
   renderBoard();
@@ -295,8 +391,7 @@ function refresh() {
 }
 
 function renderBoard() {
-  const list = $('#cards');
-  list.replaceChildren(...tasks.map((task, i) => renderCard(task, i)));
+  $('#cards').replaceChildren(...tasks.map((task, i) => renderCard(task, i)));
 }
 
 function renderCard(task, index) {
@@ -307,14 +402,30 @@ function renderCard(task, index) {
     needs_you: [WAITING_TEXT[t?.kind] || 'Needs you'],
     queued: ['Queued'],
     working: [spinner(), ' Working…'],
-    done: ['✓ Done: review'],
+    done: [task.id === 'upload' ? `✓ ${uploadSummary()}` : '✓ Done: review'],
     error: ['⚠ Error: click to retry'],
   }[task.status];
 
-  const card = el('li', { class: `card ${t?.colour || ''}`, draggable: 'true', onclick: () => t && openDetail(task.id) },
+  // While editing, the text becomes an input. Enter saves, Esc cancels.
+  const text = editingId === task.id
+    ? el('input', { class: 'card-edit', type: 'text', value: task.text, onclick: (e) => e.stopPropagation(), onkeydown: (e) => {
+        if (e.key === 'Enter') saveEdit(task, e.target.value);
+        if (e.key === 'Escape') { editingId = null; renderBoard(); }
+      } })
+    : el('div', { class: 'card-text' }, task.text);
+
+  // Edit/delete are available unless Siesta is mid-way through the task.
+  // The upload card is Siesta's own, so it can't be edited or deleted.
+  const tools = task.id !== 'upload' && !['working', 'sorting'].includes(task.status) &&
+    el('span', { class: 'card-tools' },
+      el('button', { title: 'Edit task', onclick: (e) => { e.stopPropagation(); editingId = task.id; renderBoard(); $('.card-edit').focus(); } }, '✎'),
+      el('button', { title: 'Delete task', onclick: (e) => { e.stopPropagation(); deleteTask(task); } }, '×')
+    );
+
+  const card = el('li', { class: `card ${t?.colour || ''} ${task.id === 'upload' ? 'upload' : ''}`, draggable: editingId ? 'false' : 'true', onclick: () => t && openDetail(task.id) },
     el('div', { class: 'handle', title: 'Drag to reorder' }, el('b', {}, index + 1), '⋮⋮'),
     el('div', {},
-      el('div', { class: 'card-text' }, task.text),
+      el('div', { class: 'card-top' }, text, tools),
       el('div', { class: 'card-meta' },
         el('span', {}, ...status),
         t && el('span', { class: `chip ${t.colour}` }, t.short_label)
@@ -356,8 +467,41 @@ function moveTask(fromId, toId, after) {
   tasks.splice(target + (after ? 1 : 0), 0, moved);
 }
 
+// Editing a task's wording changes what it means, so the old result and
+// colour are thrown away and that one task is sorted again.
+function saveEdit(task, value) {
+  editingId = null;
+  const text = value.trim();
+  if (!text || text === task.text) return renderBoard();
+  task.text = text;
+  task.result = null;
+  task.inputs = null;
+  sortTasks([task]);
+}
+
+function deleteTask(task) {
+  tasks.splice(tasks.indexOf(task), 1);
+  if (openTaskId === task.id) closeDetail();
+  refresh();
+}
+
+// "+ Add task" for anything missed when pasting.
+$('#add-task').addEventListener('click', () => {
+  const input = el('input', { class: 'card-edit', type: 'text', placeholder: 'Type a task and press Enter' });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') input.remove();
+    if (e.key !== 'Enter' || !input.value.trim()) return;
+    const task = { id: `t${nextId++}`, text: input.value.trim(), status: 'sorting' };
+    tasks.push(task);
+    input.remove();
+    sortTasks([task]);
+  });
+  $('#cards').append(el('li', { class: 'card new' }, input));
+  input.focus();
+});
+
 // -----------------------------------------------------------------------------
-// 4. Task detail: what Siesta needs, and what it produced
+// 5. Task detail: what Siesta needs, and what it produced
 // -----------------------------------------------------------------------------
 function openDetail(id) {
   openTaskId = id;
@@ -375,6 +519,7 @@ function renderDetail() {
   const task = tasks.find((t) => t.id === openTaskId);
   if (!task) return closeDetail();
   const t = task.triage;
+  if (!t) return; // still sorting
 
   $('#detail').replaceChildren(
     el('button', { class: 'back', onclick: closeDetail }, '← Back to list'),
@@ -382,10 +527,9 @@ function renderDetail() {
       el('span', { class: `chip ${t.colour}` }, t.short_label),
       el('h2', {}, task.text),
       el('p', {}, t.reason),
-      // Point 5 of the brief: every task says how Afternoon itself helps,
-      // even where the AI can't.
+      // Every task says how Afternoon itself helps, even where the AI can't.
       el('div', { class: 'helps' }, el('div', { class: 'label' }, 'How Afternoon helps anyway'), t.afternoon_helps),
-      el('div', { class: 'section' }, renderAction(task))
+      el('div', { class: 'section' }, task.id === 'upload' ? renderUploadGuide() : renderAction(task))
     )
   );
 }
@@ -393,17 +537,27 @@ function renderDetail() {
 // The middle of the detail view depends on the task's state and kind.
 function renderAction(task) {
   const t = task.triage;
+  if (task.status === 'sorting') return el('div', { class: 'status-line' }, spinner(), 'Sorting…');
   if (task.status === 'working') return el('div', { class: 'status-line' }, spinner(), 'Siesta is working on this…');
-  if (task.status === 'queued') return el('div', { class: 'status-line' }, 'Queued: I\'ll get to this in priority order.');
+  if (task.status === 'queued') return el('div', { class: 'status-line' }, "Queued: I'll get to this in priority order.");
   if (task.status === 'done') return renderResult(task);
   if (task.status === 'error') {
-    return el('div', {}, el('p', { class: 'error' }, task.error), el('button', { class: 'btn', onclick: () => queueTask(task, task.inputs) }, 'Try again'));
+    return el('div', {}, el('p', { class: 'error' }, task.error), el('button', { class: 'btn', onclick: () => (task.triage ? queueTask(task, task.inputs) : sortTasks([task])) }, 'Try again'));
   }
-  if (task.status === 'ready') return el('div', {}, el('div', { class: 'label' }, 'What I\'ll do'), el('p', {}, t.siesta_part), el('p', {}, 'Press "Start working" in the chat and I\'ll begin with the top card.'));
+  if (task.status === 'ready') return el('div', {}, el('div', { class: 'label' }, "What I'll do"), el('p', {}, t.siesta_part), el('p', {}, started ? "It's next in line." : 'Press "Start working" in the chat and I\'ll begin with the top green card.'));
 
   // --- Yellow and red: what Siesta needs from the adviser ---
+  if (t.kind === 'needs_upload') {
+    // A first-time adviser's record is empty. Point them at the upload card.
+    return el('div', {},
+      el('div', { class: 'label' }, 'What I need first'),
+      el('p', {}, `The Hendersons' ${t.needs_upload} isn't in Afternoon yet, and I won't guess.`),
+      el('div', { class: 'label' }, 'Then I will'), el('p', {}, t.siesta_part),
+      el('button', { class: 'btn', onclick: () => openDetail('upload') }, 'Show me how to upload it')
+    );
+  }
   if (t.kind === 'needs_answers') {
-    // Questions were generated during triage (all in one go), but are only
+    // Questions were generated during sorting (all in one go), but are only
     // asked now, when the adviser picks this task up.
     const inputs = t.questions.map((q) => el('input', { type: 'text', 'aria-label': q }));
     return el('div', {},
@@ -504,12 +658,3 @@ function renderDecision(p) {
     el('button', { class: 'btn ghost', onclick: () => { p.decision = 'rejected'; refresh(); } }, 'Reject')
   );
 }
-
-// -----------------------------------------------------------------------------
-// 5. First impression: Siesta asks for the real to-do list instead of a tour
-// -----------------------------------------------------------------------------
-say(
-  el('p', {}, 'Hi Matthew, welcome to Afternoon 👋'),
-  el('p', {}, "Rather than a tour, let's get some of your real work done. Paste today's to-do list below, one task per line."),
-  el('p', {}, "I'll show you what I can take off your plate right now, what I need a quick answer for, and what only you can do (with how Afternoon helps anyway).")
-);

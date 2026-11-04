@@ -1,0 +1,45 @@
+FICTIONAL, SYNTHETIC FACT FIND (for the Siesta To-Do Onboarding prototype; no real people)
+Henderson household fact find, completed 12 November 2025 by Matthew Cairns (adviser)
+Client since: 1 March 2019
+Address: 14 Larch Avenue, Harrogate, HG2 0QT
+
+SECTION 1: PERSONAL DETAILS
+Client 1: Sarah Henderson. Date of birth: 21/06/1979. Email: sarah.henderson@example.com. Mobile: 07700 900412.
+Client 2: Tom Henderson. Date of birth: 03/02/1977. Email: tom.henderson@example.com. Mobile: 07700 900587.
+Marital status: Married.
+
+SECTION 2: DEPENDANTS
+Ella Henderson, daughter, date of birth 09/04/2012.
+Jack Henderson, son, date of birth 30/09/2015.
+
+SECTION 3: EMPLOYMENT AND INCOME
+Sarah: Employed. Employer: Northgate Logistics Ltd. Job title: Senior Project Manager. Gross salary: £68,000 a year.
+Tom: Self-employed sole trader (Henderson Architecture). Occupation: Architect. Net profit: approximately £54,000 a year (varies).
+
+SECTION 4: HEALTH AND VULNERABILITY
+Sarah: Good health. Non-smoker.
+Tom: Good health. Mild asthma, well controlled. Non-smoker.
+No vulnerabilities identified.
+
+SECTION 5: OBJECTIVES
+1. Both retire at 60 with a joint income of £45,000 a year in today's money.
+2. Help Ella and Jack with university costs (about £20,000 each).
+3. Pay off the mortgage by 2034.
+4. Use full ISA allowances each tax year.
+
+SECTION 6: ATTITUDE TO RISK AND CAPACITY FOR LOSS
+Sarah: risk profile 5 out of 7 (balanced-adventurous). Capacity for loss: medium.
+Tom: risk profile 4 out of 7 (balanced). Capacity for loss: medium.
+
+SECTION 7: LIABILITIES AND PROTECTION
+Joint repayment mortgage with Halifax (Sarah and Tom). Balance £199,500 at November 2025. Rate 4.19% fixed until August 2027. Term ends August 2036.
+Joint decreasing life cover with Legal & General (Sarah and Tom). Sum assured £190,000. Term ends August 2036.
+
+SECTION 8: SOFT FACTS
+Sarah prefers email; Tom prefers a phone call.
+Reviews usually on Thursday afternoons.
+Tom's income is lumpy; he likes to top up his ISA in March once his accounts are done.
+
+SECTION 9: IDENTITY AND AML CHECKS
+Sarah: passport received 01/03/2019; proof of address received 02/10/2024.
+Tom: passport received 01/03/2019; proof of address OUTSTANDING (previous one expired October 2025).

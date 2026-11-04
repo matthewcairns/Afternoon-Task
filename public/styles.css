@@ -75,6 +75,7 @@ body {
 
 /* min-height: 0 lets the list shrink and scroll inside the board instead of
    spilling over the chat (a flexbox quirk). */
+#board[hidden] { display: none; }
 #cards { list-style: none; margin: 0; padding: 0 2px 4px; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 7px; }
 
 .card {
@@ -184,3 +185,73 @@ details.sources cite { display: block; color: #8a7766; font-size: 11px; font-sty
 /* Spinner */
 .spin { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; animation: spin .8s linear infinite; vertical-align: -2px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Welcome pop-up (first login) ---------- */
+.backdrop {
+  position: fixed; inset: 0; z-index: 10;
+  display: grid; place-items: center; padding: 16px;
+  background: rgba(20, 20, 20, .55);
+  backdrop-filter: blur(3px);
+}
+.backdrop[hidden] { display: none; }
+.modal {
+  width: min(560px, 100%);
+  background: var(--cream); color: var(--text);
+  border-radius: 22px; padding: 28px 30px 22px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.35);
+}
+.modal-brand { color: var(--orange-dark); font-weight: 700; font-size: 13px; }
+.modal h1 { margin: 6px 0 8px; font-size: 26px; }
+.modal p { margin: 0 0 14px; line-height: 1.45; color: #4a4038; }
+.modal textarea {
+  width: 100%; resize: vertical; font: inherit; font-size: 14px; line-height: 1.5;
+  border: 1.5px solid #ecd2bb; border-radius: 12px; padding: 12px; background: #fff; color: var(--text);
+}
+.modal textarea:focus { outline: none; border-color: var(--orange); }
+.modal-row { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px; }
+.modal-row .link { margin-right: auto; }
+.modal .small { margin: 0; }
+.link { background: none; color: var(--orange-dark); padding: 0; font-size: 13px; text-decoration: underline; }
+.small { font-size: 12px; color: #8a7766; }
+
+/* ---------- Editable cards ---------- */
+.card-top { display: flex; align-items: flex-start; gap: 6px; }
+.card-top .card-text { flex: 1; }
+.card-tools { display: flex; gap: 2px; opacity: 0; transition: opacity .1s; }
+.card:hover .card-tools { opacity: 1; }
+.card-tools button { background: none; color: #8a7766; font-size: 13px; padding: 0 4px; border-radius: 4px; }
+.card-tools button:hover { background: #f1e2d3; color: var(--text); }
+.card-edit { width: 100%; font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid var(--orange); border-radius: 6px; }
+.card.new { display: block; }
+.card.upload { background: #fff1e3; }
+.add-task { align-self: flex-start; background: none; color: var(--orange); font-size: 12.5px; font-weight: 600; padding: 4px 4px 0; }
+
+/* ---------- Upload walkthrough ---------- */
+.route { border: 1px solid #f0dcc8; border-radius: 10px; padding: 10px 12px; margin-top: 10px; background: #fff; }
+.route h4 { margin: 0 0 6px; }
+.route summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.route ul { font-size: 13px; }
+.tip { font-size: 12.5px; background: var(--orange-soft); border-radius: 8px; padding: 8px 10px; margin-top: 10px; }
+.step { font-size: 13px; margin: 12px 0 6px; }
+.step b { color: var(--orange-dark); }
+.dropzone { border: 1.5px dashed #e7c4a5; border-radius: 10px; padding: 12px; text-align: center; background: #fffaf5; }
+.dropzone.over { border-color: var(--orange); background: var(--orange-soft); }
+.dropzone p { margin: 0 0 4px; font-size: 13px; }
+.dropzone .actions { justify-content: center; }
+.dropzone small { display: block; color: #8a7766; margin-top: 8px; font-size: 11.5px; }
+.file-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f3e4d6; font-size: 12.5px; }
+.file-name { flex: 1; word-break: break-all; font-weight: 600; }
+.file-row select { font: inherit; font-size: 12px; padding: 3px; border-radius: 6px; border: 1px solid #e3cfbd; }
+.file-row .x { background: none; color: #a0522d; font-size: 15px; }
+.file-row + .btn { margin-top: 10px; }
+.review-group h4 { margin: 14px 0 4px; }
+.review-group.conflict h4 { color: #a4262b; }
+.review-item { background: #fff; border: 1px solid #f0dfcf; border-radius: 10px; padding: 8px 10px; margin-top: 6px; font-size: 13px; }
+.review-item .old { color: #a0522d; text-decoration: line-through; }
+.review-item .new { color: #13724a; font-weight: 600; }
+.review-item .actions { margin-top: 6px; align-items: center; }
+.review-item .btn { padding: 4px 10px; font-size: 12px; }
+.cite summary { cursor: pointer; color: var(--orange-dark); font-size: 11.5px; margin-top: 3px; }
+.cite blockquote { margin: 4px 0; padding: 5px 8px; border-left: 3px solid var(--orange); background: #fffaf5; font-size: 12px; }
+.cite cite { display: block; color: #8a7766; font-size: 11px; font-style: normal; }
+.sheet .confirm { color: #13724a; }

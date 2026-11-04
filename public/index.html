@@ -8,12 +8,30 @@
 </head>
 <!--
   Layout: the whole page is a static screenshot of Afternoon (set as the body
-  background in styles.css). Only the right-hand Siesta panel below is real.
-  WHY: the prototype is about the onboarding moment in the panel, not about
-  rebuilding Afternoon. It also shows how this could slot in: a self-contained
-  panel plus the small API in server.js.
+  background in styles.css). Only the right-hand Siesta panel and the welcome
+  pop-up are real.
+  WHY: the prototype is about the onboarding moment, not about rebuilding
+  Afternoon. It also shows how this could slot in: a self-contained panel plus
+  the small API in server.js.
 -->
 <body>
+  <!-- First-login pop-up. Shown on every page load: each load is a fresh
+       onboarding. Paste the to-do list to start, or Skip to explore. -->
+  <div id="welcome" class="backdrop">
+    <div class="modal" role="dialog" aria-labelledby="welcome-title">
+      <div class="modal-brand">✦ Siesta AI</div>
+      <h1 id="welcome-title">Welcome to Afternoon</h1>
+      <p>If you want to get started quickly, type or copy and paste your to-do list into this box.</p>
+      <textarea id="welcome-input" rows="9" placeholder="One task per line, e.g.&#10;Prep for the Hendersons' annual review on Thursday&#10;Chase Aviva about the Henderson pension transfer&#10;&#10;Pasting a bulleted list from Word is fine."></textarea>
+      <div class="modal-row">
+        <button type="button" id="welcome-demo" class="link">Use demo list</button>
+        <button type="button" id="welcome-skip" class="btn ghost">Skip</button>
+        <button type="button" id="welcome-start" class="btn">Get started</button>
+      </div>
+      <p class="small">Or, if you just want to explore the platform, press Skip.</p>
+    </div>
+  </div>
+
   <aside id="siesta" aria-label="Siesta AI">
     <!-- Tabs copied from the real panel. Only "Conversation" is live. -->
     <nav class="tabs">
@@ -23,14 +41,15 @@
     </nav>
 
     <div class="body">
-      <!-- The to-do board: one card per pasted line, draggable to set priority.
-           Pinned above the chat so it's always to hand while Siesta works. -->
+      <!-- The to-do board: one card per pasted line, draggable to set priority
+           and editable. Pinned above the chat so it's always to hand. -->
       <section id="board" hidden>
         <header class="board-head">
           <span>Your to-do list</span>
           <span class="legend"><i class="dot green"></i>Siesta <i class="dot yellow"></i>Needs you <i class="dot red"></i>Can't</span>
         </header>
         <ol id="cards"></ol>
+        <button type="button" id="add-task" class="add-task">+ Add task</button>
       </section>
 
       <!-- Conversation with Siesta. -->
@@ -41,7 +60,7 @@
     </div>
 
     <form id="composer">
-      <textarea id="input" rows="3" placeholder="Paste your to-do list, one task per line…"></textarea>
+      <textarea id="input" rows="3" placeholder="Paste or type more tasks, one per line…"></textarea>
       <div class="composer-row">
         <button type="button" id="demo" class="pill">Use demo list</button>
         <span class="hint">Ctrl/⌘ + Enter to send</span>
@@ -50,6 +69,9 @@
     </form>
   </aside>
 
+  <!-- app.js first (state, helpers, board, chat), then upload.js (the
+       "get client information in" walkthrough). -->
   <script src="/app.js"></script>
+  <script src="/upload.js"></script>
 </body>
 </html>

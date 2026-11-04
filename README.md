@@ -4,6 +4,8 @@ A prototype for **Afternoon**: on first login, Siesta asks the adviser to paste 
 
 > **The aim:** advisers feel they're getting work done, not learning a new tool.
 
+A brand-new Afternoon account has **no client data**, so Siesta is honest about it. Every task starts yellow or red, and Siesta walks the adviser through uploading their existing documents. As the client record fills up, tasks **turn green** and Siesta gets on with them.
+
 All client data is **fictional and synthetic** (the Henderson household).
 
 ---
@@ -22,43 +24,45 @@ Put your OpenAI key in `.env`, then:
 npm start
 ```
 
-Open http://localhost:3000. Click **Use demo list**, send it, then press **Start working**.
+Open http://localhost:3000. **Every page load is a fresh first login**: the session resets and the welcome pop-up appears.
 
-Restarting the server resets the demo. Approvals and memories are kept in memory, and the files in `data/` are never modified.
+### Demo script
+
+1. **Welcome pop-up:** paste the to-do list (bulleted lists copied from Word work), then click **Get started**. **Skip** closes it to explore.
+2. **Sorted:** every card is yellow or red, because nothing is in Afternoon yet. A **Start here** card appears at the top: *Get your client information into Afternoon*.
+3. **Fix the list:** drag to reorder, ✎ to edit a card (it gets sorted again), × to delete, **+ Add task** for anything missed.
+4. **Upload:** open *Start here*. It lists what each task is waiting for, then walks through the platform's steps. Use the files in **`demo-uploads/`**.
+   - **Batch 1 (5 files):** fact find, valuations CSV, 2025 review transcript, actions CSV, Aviva emails. Upload, **Process data**, **Add everything as new**, **Finalise review**.
+   - Siesta sorts the list again, and three tasks turn 🟢: review prep, the pension question and the Aviva chaser.
+   - **Batch 2 (optional):** `sarah-voicemail-file-note-2026-10-28.txt` shows a **conflict**: the record says Northgate, but the voicemail says she's left.
+5. **Start working:** Siesta does the green tasks top-down, producing a review pack, a cited answer and a chaser draft.
+6. **Yellow and red:** "Call Sarah" is a handoff. Record the call outcome, then approve the proposed updates. "Outlook" gets a walkthrough. The ISA task can't be done, so it offers an allowance check instead.
+7. **Memory and skills:** save suggested memories or skills when they're offered.
 
 ---
 
 ## What it does
 
-1. **Paste**: each line of the to-do list becomes a task card. Bullets and numbers are stripped.
-2. **Prioritise**: drag the cards into order. Siesta always works on the highest queued card next, so you can reorder while it works.
-3. **Sort**: Siesta colours each card, using `docs/afternoon-capabilities.md` as the source of truth:
+| Colour | Kind | Meaning |
+|---|---|---|
+| 🟢 green | `siesta_now` | Siesta can do it alone (find, prepare, draft, propose) |
+| 🟡 yellow | `needs_upload` | Siesta could do it, but the client information isn't in Afternoon yet |
+| 🟡 yellow | `needs_answers` | The information is there, but Siesta needs a decision or fact from you |
+| 🟡 yellow | `walkthrough` | You do it in the platform; Siesta walks you through it |
+| 🟡 yellow | `handoff` | You do a first step (e.g. phone the client), then Siesta takes over |
+| 🔴 red | `cannot` | Siesta can't do it: you get the reason and an alternative it *can* do |
 
-   | Colour | Kind | Meaning |
-   |---|---|---|
-   | 🟢 green | `siesta_now` | Siesta can do it alone (find, prepare, draft, propose) |
-   | 🟡 yellow | `needs_answers` | Siesta can do it once you answer its questions |
-   | 🟡 yellow | `walkthrough` | You do it in the platform; Siesta walks you through it |
-   | 🟡 yellow | `handoff` | You do a first step (e.g. phone the client), then Siesta takes over |
-   | 🔴 red | `cannot` | Siesta can't do it: you get the reason and an alternative it *can* do |
-
-4. **Afternoon helps anyway**: every card also says how the platform itself helps, even where the AI can't.
-5. **Questions**: all questions are generated at once during sorting, but each is asked only when you click its yellow card.
-6. **Start working**: Siesta says which task it's starting with and what you could do meanwhile, then works through the green cards in order.
-7. **Only drafts and proposes**: emails are editable drafts that you open in your own mail app and send yourself. Record changes are proposals you **Approve** or **Reject**, and approved changes feed into later tasks.
-8. **Handoff**: on "Call Sarah…", you note what you learnt and click *I've done my part*. Siesta then proposes the record updates.
-9. **Memory and skills**: after a task, Siesta may suggest saving a fact to company memory or turning repeat work into a skill. Nothing is saved unless you click. Saved memories are used in later prompts.
-
-### Demo list (covers every case)
-
-| Task | Result |
-|---|---|
-| Prep for the Hendersons' annual review on Thursday | 🟢 review pack and pre-meeting email draft |
-| What did we agree about Sarah's pension contributions? | 🟢 exact quote from the transcript, with timestamp |
-| Chase Aviva about the Henderson pension transfer | 🟢 chaser draft quoting the case ref; you send it |
-| Move £5,000 into Tom Henderson's ISA | 🔴 can't move money; offers an allowance check instead |
-| Set up my Outlook calendar so meetings record automatically | 🟡 step-by-step walkthrough |
-| Call Sarah to confirm her new employer, then update her record | 🟡 handoff, then record-update proposals |
+- **Every card also says how Afternoon helps anyway**, even where the AI can't.
+- **Questions** are generated at once during sorting, but each is only asked when you click its yellow card.
+- **Getting data in** follows Afternoon's own flow (`data/guide/afternoon-user-guide-adding-client-data.md`):
+  - choose up to 5 files and pick an upload model for each (Fact Find, Core, DARSCO, IO Fund Valuation; Siesta suggests one);
+  - each file goes from *Extracting* to *Ready*, then **Process data**;
+  - review the findings as new information, updates and conflicts, each with a citation;
+  - use the global buttons or decide item by item, then **Finalise review**.
+  - The other two routes (valuation feeds, manual entry) are explained.
+- **Extraction is real.** Each file's text goes to the AI with the chosen upload model. Accepted fields become the client record, and the documents become searchable for later tasks.
+- **Only drafts and proposes.** Emails are editable drafts that you open in your own mail app and send yourself. Record changes need **Approve**.
+- **Memory and skills:** suggested after tasks, and saved only on click. Saved memories feed later prompts.
 
 ---
 
@@ -67,35 +71,40 @@ Restarting the server resets the demo. Approvals and memories are kept in memory
 ```
  Browser: public/ (plain HTML/CSS/JS)          Server: server.js (Node, no deps)            OpenAI
  ┌────────────────────────────────┐           ┌──────────────────────────────────┐        ┌────────┐
- │ screenshot background          │           │ POST /api/triage ─┐              │        │        │
- │ Siesta panel                   │  JSON     │ POST /api/run ────┼─ search() ───┼──────► │ gpt-   │
- │  · cards (drag to reorder)     │ ────────► │                   │  data/ files │ JSON   │ 6.1-   │
- │  · chat                        │           │ POST /api/approve   (session     │ schema │ terra  │
- │  · task detail                 │ ◄──────── │ POST /api/memory     state)      │ ◄──────│        │
- └────────────────────────────────┘           │ OPENAI_API_KEY from .env only    │        └────────┘
+ │ welcome pop-up                 │           │ POST /api/reset                  │        │        │
+ │ Siesta panel                   │  JSON     │ POST /api/triage  ─┐             │        │        │
+ │  · cards (drag, edit)          │ ────────► │ POST /api/extract ─┼── prompts ──┼──────► │ gpt-   │
+ │  · chat                        │           │ POST /api/run     ─┘  + search() │ JSON   │ 6.1-   │
+ │  · task detail / upload flow   │ ◄──────── │ POST /api/finalise  (session:    │ schema │ terra  │
+ └────────────────────────────────┘           │ POST /api/approve    record,     │ ◄──────│        │
+                                              │ POST /api/memory     documents)  │        └────────┘
+                                              │ OPENAI_API_KEY from .env only    │
                                               └──────────────────────────────────┘
 ```
 
 | File | What it is |
 |---|---|
-| `server.js` | Static file server, the 5 API routes, keyword search and OpenAI calls. |
-| `public/app.js` | Panel logic. One `tasks` array (in priority order) plus a `refresh()` that redraws everything from it. |
-| `public/index.html`, `styles.css` | Panel markup and styling. The screenshot is the page background. |
+| `server.js` | Static files, API routes, session state (record, documents), keyword search, OpenAI calls. |
+| `public/app.js` | Welcome pop-up, list parsing, board (drag/edit), chat, work queue, task detail. One `tasks` array in priority order, and a `refresh()` that redraws everything from it. |
+| `public/upload.js` | The *Start here* card: the walkthrough and the upload, extract, review and finalise steps. |
+| `public/index.html`, `styles.css` | Markup and styling. The screenshot is the page background. |
 | `docs/afternoon-capabilities.md` | Source of truth for what Siesta can and can't do; sent with every request. |
-| `data/hendersons/*` | Synthetic household: profile, holdings, meeting actions, a 2025 review transcript, Aviva emails, a voicemail note. |
-| `data/guide/*` | Placeholder user-guide page for the Outlook walkthrough. It would be replaced by the real guide. |
+| `data/guide/*` | Platform user-guide pages (always available). The adding-client-data page is from Afternoon's guidance; the calendar page is a placeholder. |
+| `demo-uploads/*` | The adviser's existing files to upload (synthetic): fact find, valuations, transcript, actions, Aviva emails, voicemail note. |
 
 ### Design decisions
 
-- **Grounded in the capabilities doc.** The model sorts tasks against Afternoon's documented rules, not its own idea of what an assistant can do. That's why "Move £5,000" comes back red with the documented reason.
-- **The model chooses a *kind*; the code chooses the *colour*.** One decision for the model and one fixed rule in code, so a card can never say "cannot" and still be green.
-- **Structured outputs (JSON schema).** Every response has the same shape, so the UI just displays the fields. One result schema covers answers, emails, proposals, steps, sources and suggestions.
-- **Simple retrieval.** The structured record (`.json`) is always included. Documents are ranked by keyword overlap. In testing, pure keyword search sometimes dropped the holdings file, so a review pack came back without the mortgage; that's why the structured record is always included. No vector database is needed at this size.
-- **Citations.** Every result lists exact quotes plus their file.
-- **Human approval everywhere.** Siesta can't send, move money or edit a record. Every change has an Approve button, which is the only place a change happens.
-- **The key stays on the server.** The browser only talks to localhost. `.env` is git-ignored. Static serving is limited to `public/` and `assets/`, so `.env` and `data/` can't be fetched.
-- **Zero dependencies.** Node 22's built-in `http`, `fetch` and `--env-file` handle everything, so there's no hidden code to explain.
-- **Built to slot in.** The panel is self-contained, and the API is a small, typed contract (`triage → run → approve/memory`). In Afternoon, `search()` would call the real client record and `approve` would call the real record-update flow.
+- **Start empty, like a real first login.** The client data isn't preloaded: it only exists once uploaded and finalised. Siesta's honesty ("I won't guess") turns into a reason to do the most valuable onboarding step, which is getting data in.
+- **Grounded in the capabilities doc.** The model sorts tasks against Afternoon's documented rules, not its own idea of what an assistant can do.
+- **The model chooses a *kind*; the code chooses the *colour*.** One decision for the model and one fixed rule in code, so a card can't say "cannot" and still be green.
+- **Structured outputs (JSON schema)** for sorting, extraction and task results, so the UI just displays the fields.
+- **Re-sort after every upload.** Each finalised batch re-checks every open card. That's how tasks turn green, and it also corrects earlier misjudgements.
+- **Citations everywhere.** Extracted fields and task results quote the exact source text plus its file.
+- **Human approval everywhere.** Extracted fields need Add/Update, record changes need Approve, and emails are only drafts.
+- **Simple retrieval.** Structured tables (CSV) are always included, and text documents are ranked by keyword overlap. No vector database is needed at this size.
+- **The key stays on the server.** The browser only talks to localhost, `.env` is git-ignored, and static serving is limited to `public/` and `assets/`.
+- **Zero dependencies.** Node 22's built-in `http`, `fetch` and `--env-file`. The prototype reads `.txt`/`.csv`; PDF and Word would need one parsing library, and other supported types are accepted and explained.
+- **Built to slot in.** The panel is self-contained, and the API is small and typed. In Afternoon, `/api/extract` and `/api/finalise` would be the real extraction pipeline, and `search()` the real client record.
 
 ---
 
@@ -103,25 +112,26 @@ Restarting the server resets the demo. Approvals and memories are kept in memory
 
 ### Why this problem
 - Advisers like Afternoon in demos but struggle to fit it into their day. Onboarding that teaches *the tool* competes with their real work.
-- This flips it: the adviser's own to-do list *is* the onboarding. The first session produces real output (a review pack, a chaser, a record update). It also teaches what Siesta can do, what needs them, and what it can't do, using their own tasks rather than a feature list.
+- This flips it: the adviser's own to-do list *is* the onboarding. It shows what Siesta can do, what needs them, and what it can't do, using their own tasks.
+- The biggest real blocker for a new firm is an empty platform. Tying uploads to tasks the adviser actually wants done gives them a reason to upload now, and watching cards turn green is the payoff.
 - Red and yellow cards build trust: being honest about limits, with an alternative, beats an assistant that over-promises.
 
 ### AI tools I used, and how
-- **Claude Code** (Anthropic's coding agent) as a pair programmer. We agreed a plan first: architecture, the colour model, the data and the constraints. It then generated the synthetic data and code, ran an end-to-end browser test with Playwright, and I reviewed and iterated. For example, the test showed the review pack missing the mortgage, which led to the "always include the record" fix.
-- **OpenAI `gpt-6.1-terra`** at runtime, with structured JSON outputs, for sorting tasks and doing them.
+- **Claude Code** (Anthropic's coding agent) as a pair programmer. We agreed a plan first: architecture, colour model, data and constraints. It then generated the synthetic data and code, and ran end-to-end browser tests with Playwright after every change. I reviewed and iterated. For example, the tests showed "Chase Aviva" being marked red ("can't contact third parties"), which led to a prompt fix (drafting a chaser *is* possible) and to re-sorting red cards after uploads.
+- **OpenAI `gpt-6.1-terra`** at runtime, with structured JSON outputs, for sorting, document extraction and doing tasks.
 
 ### What I'd improve next
-- **Real retrieval:** call Afternoon's client-record APIs, use tool calling so the model chooses what to look up, and use embeddings for long documents.
-- **Streaming responses** so long tasks (review packs) appear progressively.
-- **Real integrations:** create Outlook drafts directly in the adviser's mailbox, apply approved changes through Afternoon's conflict-checked update flow, and use real company memory and skills.
-- **Learn from corrections:** if an adviser re-colours a card or rejects a proposal, feed that back into the prompt and evals.
-- **An eval set:** a few hundred real (anonymised) to-do lines with expected kinds, run against prompt and model changes. Plus checks on citation accuracy.
-- **Persistence:** keep the to-do board across sessions, so it becomes the adviser's daily start page rather than a one-off.
+- **Real file types:** PDF and Word parsing, OCR for photos, and connecting to the real extraction pipeline and SharePoint.
+- **Smarter extraction review:** dedupe fields across files in one batch, and show conflicts within a batch.
+- **Real retrieval:** Afternoon's client-record APIs, tool calling so the model chooses what to look up, and embeddings for long documents.
+- **Streaming responses** for long tasks; persist the board across sessions so it becomes a daily start page.
+- **An eval set:** a few hundred real (anonymised) to-do lines with expected kinds, plus citation-accuracy checks, run on every prompt or model change.
+- **Learn from corrections:** if an adviser edits a card, rejects a proposal or discards extracted fields, feed that back into prompts and evals.
 
 ### How I'd measure impact
-- **Activation:** % of new advisers who paste a list on day one; time to first useful output (first approved draft or record update).
-- **Adoption:** weekly active advisers in weeks 1–8 compared with the current onboarding cohort; Siesta tasks per adviser per week; % of sessions that start from the to-do board.
-- **Value:** draft acceptance rate (sent with few edits), proposal approval rate, estimated time saved per task type.
-- **Trust and quality:** how often advisers disagree with Siesta's sorting, or report a wrong citation.
-- **Learning:** whether advisers try new task types over time (do they discover skills, memory, review packs?).
+- **Activation:** % of new advisers who paste a list on day one; % who upload at least one batch in their first session; time to first useful output.
+- **Data completeness:** fields on the record after week 1 compared with the current onboarding (the real precondition for everything else).
+- **Adoption:** weekly active advisers in weeks 1–8 compared with the current cohort; Siesta tasks per adviser per week.
+- **Value:** draft acceptance rate (sent with few edits), proposal and extracted-field acceptance rates, estimated time saved per task type.
+- **Trust and quality:** how often advisers re-sort or edit Siesta's sorting, and how often citations are reported wrong.
 - **Run it as an A/B test** (new onboarding vs. current) by firm, with a 30-day retention comparison, plus short interviews with advisers who stop using it.

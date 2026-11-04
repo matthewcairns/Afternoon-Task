@@ -1,4 +1,4 @@
-FICTIONAL, SYNTHETIC EMAIL THREAD — from Matthew's connected Outlook mailbox
+FICTIONAL, SYNTHETIC EMAIL THREAD (exported from Matthew's Outlook)
 Subject thread: Transfer out — Sarah Henderson — policy AV-PP-7731904
 
 --- 18 Aug 2026, Matthew Cairns -> transfers@aviva-example.co.uk
@@ -13,4 +13,4 @@ Following up on case AVT-448812 — we haven't seen the funds arrive at Transact
 --- 30 Sep 2026, Aviva Pension Transfers Team -> Matthew Cairns
 Apologies for the delay. We needed an updated signature on the discharge form; this was received on 29 Sep. We expect to complete within 10 working days.
 
---- No further correspondence. As at 4 Nov 2026 the Transact SIPP (TR-SIPP-55120) still shows a value of £0 and the Aviva policy still shows £41,250.
+--- No further correspondence. As at 4 Nov 2026 no completion confirmation has been received.

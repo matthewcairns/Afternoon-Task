@@ -1,7 +1,8 @@
 // =============================================================================
 // Siesta To-Do Onboarding — server
 // -----------------------------------------------------------------------------
-// One file, zero npm dependencies. Run with:   node --env-file=.env server.js
+// One file, zero npm dependencies. Run with:   npm start
+//                                   (which is: node --env-file=.env server.js)
 //
 // WHY no dependencies? I need to be able to explain every line, and the
 // prototype should "just run" on a laptop. Node 22 ships everything needed:
@@ -9,15 +10,22 @@
 //   - `fetch`  for calling OpenAI (no SDK)
 //   - `--env-file` for reading .env (no dotenv)
 //
+// THE STORY it supports: a brand-new adviser. Afternoon knows nothing about
+// their clients yet, so at first Siesta can't do much on its own. As the
+// adviser uploads documents, the client record fills up and tasks turn green.
+//
 // WHAT the server does:
 //   1. Serves the static front end (public/) and the screenshot (assets/).
 //   2. Exposes a small JSON API that the Siesta panel calls. It is shaped like
 //      something that could sit behind a real Afternoon panel:
-//        POST /api/triage   to-do lines        -> green / yellow / red cards
-//        POST /api/run      one task (+inputs) -> drafts, answers, proposals
-//        POST /api/approve  adviser approves a proposed record change
-//        POST /api/memory   adviser saves a suggested memory or skill
-//        GET  /api/state    what has been approved / saved this session
+//        POST /api/reset     start a fresh onboarding (page load)
+//        POST /api/triage    to-do lines        -> green / yellow / red cards
+//        POST /api/extract   one uploaded file  -> fields found, with citations
+//        POST /api/finalise  adviser's reviewed fields -> the client record
+//        POST /api/run       one task (+inputs) -> drafts, answers, proposals
+//        POST /api/approve   adviser approves a proposed record change
+//        POST /api/memory    adviser saves a suggested memory or skill
+//        GET  /api/state     what's in the session (handy for debugging)
 //   3. Keeps the OpenAI key here, on the server. The browser never sees it.
 // =============================================================================
 
@@ -47,39 +55,31 @@ if (!API_KEY) {
 // Afternoon's documented rules (e.g. "can't move money", "can't send emails").
 const CAPABILITIES = fs.readFileSync(path.join(ROOT, 'docs/afternoon-capabilities.md'), 'utf8');
 
-// The synthetic client files Siesta can "search": the Henderson household plus
-// a placeholder user-guide page. We load them once at start-up and split them
-// into small chunks so we can send only the relevant bits to the model, with
-// the file name attached so answers can cite their source.
-const DATA_DIR = path.join(ROOT, 'data');
+// Platform knowledge (user-guide pages in data/guide/) is always available:
+// Siesta can answer "how do I…?" questions from day one.
+// CLIENT knowledge is NOT loaded from disk. It only exists once the adviser
+// uploads documents and finalises the review, just like a real first login.
+// (Loaded below, once the chunking and search helpers are defined.)
 
-function loadChunks() {
-  const chunks = [];
-  for (const rel of listFiles(DATA_DIR)) {
-    const text = fs.readFileSync(path.join(DATA_DIR, rel), 'utf8');
-    // JSON files are small, structured records: keep each one whole so the
-    // model sees complete objects (e.g. a full pension entry).
-    // Text files (transcripts, emails, notes) are split on blank lines. A
-    // transcript line like "[00:13:55] Matthew: ..." becomes its own chunk,
-    // which gives us exact, quotable sources.
-    const pieces = rel.endsWith('.json') ? [text] : text.split(/\n\s*\n/);
-    // The first paragraph of a text file is its header (meeting title, date,
-    // attendees). We prepend it to each chunk so a lone transcript line still
-    // tells the model WHICH meeting it came from.
-    const header = rel.endsWith('.json') ? '' : pieces[0].trim();
-    pieces.forEach((p, i) => {
-      if (!p.trim()) return;
-      const body = i === 0 || !header ? p.trim() : `(${firstLine(header)})\n${p.trim()}`;
-      chunks.push({ file: rel, text: body, terms: termSet(body + ' ' + rel) });
+// Split a document into small, quotable chunks, each tagged with its file name
+// so answers can cite their source.
+function chunkDocument(file, text) {
+  // CSV files are small structured tables: keep them whole so the model sees
+  // complete rows with their headers.
+  // Text files (transcripts, emails, notes) are split on blank lines. A
+  // transcript line like "[00:13:55] Matthew: ..." becomes its own chunk,
+  // which gives exact, quotable sources.
+  const pieces = file.endsWith('.csv') ? [text] : text.split(/\n\s*\n/);
+  // The first paragraph is usually a header (meeting title, date, attendees).
+  // We prepend its first line to every chunk so a lone transcript line still
+  // tells the model WHICH meeting it came from.
+  const header = file.endsWith('.csv') ? '' : firstLine(pieces[0].trim());
+  return pieces
+    .filter((p) => p.trim())
+    .map((p, i) => {
+      const body = i === 0 || !header ? p.trim() : `(${header})\n${p.trim()}`;
+      return { file, text: body, whole: file.endsWith('.csv'), terms: termSet(body + ' ' + file) };
     });
-  }
-  return chunks;
-}
-
-function listFiles(dir, prefix = '') {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
-    d.isDirectory() ? listFiles(path.join(dir, d.name), path.join(prefix, d.name)) : [path.join(prefix, d.name)]
-  );
 }
 
 const firstLine = (s) => s.split('\n')[0];
@@ -101,41 +101,61 @@ function termSet(text) {
   return new Set(words.filter((w) => w.length > 2 && !STOP.has(w)).map((w) => w.slice(0, 6)));
 }
 
-// The structured client record (the .json files: profile, holdings, actions)
-// is small and relevant to almost every task, so it is ALWAYS included.
-// WHY? In testing, keyword search sometimes ranked the holdings file below
-// transcript lines, so a review pack came back "missing" the mortgage. The
-// record is the client's core data, and search is for the documents around it.
+// Rank chunks by how many query stems they contain and return the best few.
+// Whole tables (CSV) are always included: they're small and relevant to most
+// tasks. In testing, pure keyword search sometimes ranked the holdings table
+// below transcript lines, and a review pack came back "missing" values.
 function search(query, k = 10) {
   const q = termSet(query);
-  const records = CHUNKS.filter((c) => c.file.endsWith('.json'));
-  const documents = CHUNKS.filter((c) => !c.file.endsWith('.json'))
+  const chunks = [...GUIDE_CHUNKS, ...state.documentChunks];
+  const tables = chunks.filter((c) => c.whole);
+  const ranked = chunks
+    .filter((c) => !c.whole)
     .map((c) => ({ c, score: [...q].filter((t) => c.terms.has(t)).length }))
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, k)
     .map((x) => x.c);
-  return [...records, ...documents];
+  return [...tables, ...ranked];
 }
 
 // Format search hits for the prompt, labelled with their file so the model can
-// cite them, e.g.  [source: hendersons/meeting-actions.json]
+// cite them, e.g.  [source: uploads/aviva-transfer-emails.txt]
 const formatChunks = (chunks) =>
-  chunks.map((c) => `[source: ${c.file}]\n${c.text}`).join('\n\n---\n\n') || '(no matching client files)';
+  chunks.map((c) => `[source: ${c.file}]\n${c.text}`).join('\n\n---\n\n') || '(no matching documents)';
 
-const CHUNKS = loadChunks();
+const GUIDE_DIR = path.join(ROOT, 'data/guide');
+const GUIDE_CHUNKS = fs.readdirSync(GUIDE_DIR).flatMap((name) =>
+  chunkDocument(`guide/${name}`, fs.readFileSync(path.join(GUIDE_DIR, name), 'utf8'))
+);
 
 // -----------------------------------------------------------------------------
 // 2. Session state (in memory on purpose)
 // -----------------------------------------------------------------------------
-// WHY in memory? It's a demo: restarting the server resets everything, and the
-// synthetic files on disk are never modified. In Afternoon these would be the
-// real client record, firm memory and skills store.
-const state = {
-  approvedChanges: [], // record updates the adviser approved
-  memories: [], // firm/client memories the adviser chose to save
-  skills: [], // repeatable workflows saved as skills
-};
+// WHY in memory? It's a demo of a FIRST login: every page load calls
+// /api/reset, so each run starts with an empty Afternoon. The files on disk
+// are never modified. In Afternoon these would be the real client record,
+// documents store, firm memory and skills.
+const state = freshState();
+
+function freshState() {
+  return {
+    record: [], // client record fields the adviser accepted from uploads
+    documents: [], // uploaded documents (they "stay in the Documents area")
+    documentChunks: [], // searchable chunks of those documents
+    approvedChanges: [], // record updates the adviser approved from task results
+    memories: [], // firm/client memories the adviser chose to save
+    skills: [], // repeatable workflows saved as skills
+  };
+}
+
+// The client record as the model sees it. When it's empty we say so plainly,
+// which is what makes Siesta mark data-dependent tasks "needs_upload".
+function recordText() {
+  if (!state.record.length) return 'CLIENT RECORD IN AFTERNOON: EMPTY. Nothing has been uploaded or entered for any client yet.';
+  const lines = state.record.map((r) => `- [${r.section}] ${r.field}: ${r.value}  (from ${r.file})`);
+  return `CLIENT RECORD IN AFTERNOON (fields the adviser has accepted):\n${lines.join('\n')}`;
+}
 
 // Approved changes and saved memories are fed back into later prompts, so the
 // adviser can see that approving or remembering something changes later work.
@@ -143,7 +163,9 @@ function sessionContext() {
   const changes = state.approvedChanges.map((c) => `- ${c.member}: ${c.field} changed from "${c.current_value}" to "${c.proposed_value}" (approved by adviser)`);
   const mems = state.memories.map((m) => `- ${m}`);
   return [
-    'Record changes approved by the adviser this session (these OVERRIDE the client files):',
+    recordText(),
+    '',
+    'Record changes approved by the adviser this session (these OVERRIDE older values):',
     changes.join('\n') || '- none',
     '',
     'Saved firm memory (apply these preferences):',
@@ -186,7 +208,7 @@ const arr = (items, description) => ({ type: 'array', items, description });
 const SIESTA_RULES = `You are Siesta, the AI assistant built into Afternoon, a platform for UK financial advisers.
 You are the adviser's helper, never the adviser. Hard rules (from the capabilities document):
 - You only draft and propose. You never send, move money, contact anyone or change a record yourself.
-- Never invent data. If something isn't in the client files, say it's missing.
+- Never invent data. If something isn't in the client record or documents, say it's missing.
 - Use British English and £. Be brief, warm and practical. Today is ${new Date().toDateString()}.
 - Be pragmatic, not pedantic: read relative dates ("1 Nov", "Thursday") against today's date and use normal UK conventions (salaries are annual). Only flag gaps that actually matter.
 - The client data is fictional and synthetic (the Henderson household).`;
@@ -197,11 +219,12 @@ You are the adviser's helper, never the adviser. Hard rules (from the capabiliti
 // The model picks a KIND for each task. The COLOUR is then worked out here in
 // code from the kind. WHY? If the model chose both, it could contradict itself
 // (e.g. "cannot" but green). One decision by the model, one fixed rule in code.
-const KINDS = ['siesta_now', 'needs_answers', 'walkthrough', 'handoff', 'cannot'];
+const KINDS = ['siesta_now', 'needs_upload', 'needs_answers', 'walkthrough', 'handoff', 'cannot'];
 const COLOUR = {
   siesta_now: 'green', // Siesta can do it alone
+  needs_upload: 'yellow', // Siesta could do it, once the client's information is in Afternoon
   needs_answers: 'yellow', // Siesta can do it once you answer a question
-  walkthrough: 'yellow', // you do it, Afternoon/Siesta walks you through
+  walkthrough: 'yellow', // you do it, Siesta walks you through
   handoff: 'yellow', // you do a first step, then Siesta takes over
   cannot: 'red', // Siesta can't do it (reason + alternative)
 };
@@ -211,28 +234,32 @@ const TRIAGE_SCHEMA = obj({
     obj({
       id: str('The task id exactly as given'),
       kind: { type: 'string', enum: KINDS },
-      short_label: str('2-5 words for the card, e.g. "Siesta drafts, you send" or "Siesta can\'t move money"'),
-      reason: str('One sentence: why this kind, grounded in the capabilities document'),
+      short_label: str('2-5 words for the card, e.g. "Siesta drafts, you send", "Upload notes first" or "Siesta can\'t move money"'),
+      reason: str('One sentence: why this kind, grounded in the capabilities document and the client record'),
       siesta_part: str('One sentence: what Siesta WILL do for this task, in the future tense. Do not do the task or give the answer yet. ("" if nothing)'),
       your_part: str('One sentence: what the adviser must do themselves ("" if nothing)'),
-      questions: arr(str('A short question'), 'Only for needs_answers: 1-3 questions whose answers are NOT in the client files. Otherwise []'),
+      needs_upload: str('Only for needs_upload: the client information to upload, in plain words, e.g. "notes or recording from last year\'s review". Otherwise ""'),
+      questions: arr(str('A short question'), 'Only for needs_answers: 1-3 questions whose answers are NOT in the record or documents. Otherwise []'),
       alternative: str('Only for cannot: a concrete thing Siesta CAN do instead. Otherwise ""'),
       afternoon_helps: str('One sentence: how the Afternoon platform itself helps with this task even without the AI (use section 3 of the document), specific to this task'),
     })
   ),
-  meanwhile: str('One or two sentences: while Siesta works on the green tasks, what should the adviser do themselves? Name the specific tasks only they can move forward.'),
+  meanwhile: str('One or two sentences: while Siesta works on the green tasks, what should the adviser do themselves? If nothing is green yet, say what unlocks the most tasks.'),
 });
 
 const TRIAGE_SYSTEM = `${SIESTA_RULES}
 
-The adviser has just opened Afternoon for the first time. Instead of a product tour, they pasted their real to-do list.
+The adviser is brand new to Afternoon. Instead of a product tour, they pasted their real to-do list.
+Client information only exists in Afternoon once it has been uploaded or entered: check the CLIENT RECORD and DOCUMENTS below.
 Sort EACH task into exactly one kind, using the capabilities document as the only source of truth:
-- siesta_now: you can complete it alone right now (find information, prepare packs, draft emails, propose updates). Drafting an email the adviser then sends themselves is siesta_now; say they press send.
-- needs_answers: you could do it, but you need information that is NOT in the client files and that you must not guess. Ask the fewest questions possible.
+- siesta_now: you can complete it alone right now because the information it needs IS in the record or documents (find information, prepare packs, draft emails, propose updates). Drafting an email the adviser then sends themselves is siesta_now; say they press send.
+- needs_upload: you could do it yourself, but the client information it depends on is NOT in Afternoon yet. Say exactly what to upload. Never mark a task siesta_now if its information is missing.
+- needs_answers: the information is in Afternoon, but you need a decision or fact that no document would hold. Ask the fewest questions possible.
 - walkthrough: the adviser must do it themselves in the platform (clicking buttons, connecting integrations); you can walk them through it step by step.
 - handoff: the adviser must do a first step you cannot (e.g. phone the client); once they tell you the outcome, you take over (e.g. propose the record update).
 - cannot: you cannot do it at all. Give the documented reason and a useful alternative you CAN do.
-Check the client file excerpts before asking a question. Never ask for something that is already there.`;
+Requests to chase, email or follow up with someone are NOT cannot: you can't contact them, but you CAN draft the message for the adviser to send, so they are siesta_now (or needs_upload if you lack the details to write it). Use cannot only when there is nothing useful you can draft or prepare towards the task itself (e.g. moving money).
+Platform how-tos don't need client data.`;
 
 async function triage({ tasks }) {
   const taskList = tasks.map((t) => `${t.id}: ${t.text}`).join('\n');
@@ -242,7 +269,7 @@ async function triage({ tasks }) {
     system: TRIAGE_SYSTEM,
     schemaName: 'triage',
     schema: TRIAGE_SCHEMA,
-    user: `TO-DO LIST (in the adviser's priority order):\n${taskList}\n\n${sessionContext()}\n\nCLIENT FILE EXCERPTS:\n${formatChunks(hits)}\n\nCAPABILITIES DOCUMENT:\n${CAPABILITIES}`,
+    user: `TO-DO LIST (in the adviser's priority order):\n${taskList}\n\n${sessionContext()}\n\nDOCUMENT EXCERPTS:\n${formatChunks(hits)}\n\nCAPABILITIES DOCUMENT:\n${CAPABILITIES}`,
   });
   // Attach the colour in code (see COLOUR above).
   result.tasks.forEach((t) => (t.colour = COLOUR[t.kind]));
@@ -250,7 +277,73 @@ async function triage({ tasks }) {
 }
 
 // -----------------------------------------------------------------------------
-// 5. /api/run — do one task
+// 5. /api/extract and /api/finalise — getting client data INTO Afternoon
+// -----------------------------------------------------------------------------
+// This mirrors Afternoon's document flow: pick an upload model, the platform
+// reads the file with AI (Extracting -> Ready), then "Process data" shows what
+// it found as new information, updates and conflicts, each with a citation.
+// The upload model changes what the AI looks for, as it would in the product.
+const UPLOAD_MODELS = {
+  'Fact Find': 'An existing fact find. Extract personal details, dependants, employment and income, health, objectives, attitude to risk, capacity for loss, liabilities, protection, soft facts and ID/AML checks.',
+  Core: 'A general document (provider statement, letter, email thread, meeting transcript, action list, file note). Extract every client fact, holding, agreement, action and status it contains.',
+  DARSCO: 'Pension data in DARSCO format. Extract each pension: owner, provider, policy reference, value, contributions and dates.',
+  'IO Fund Valuation': 'Fund valuation data. Extract each holding: owner, provider, product, policy reference, value and valuation date.',
+};
+
+const EXTRACT_SCHEMA = obj({
+  summary: str('One sentence: what this document is and what it adds'),
+  items: arr(
+    obj({
+      group: { type: 'string', enum: ['new', 'update', 'conflict'] },
+      section: str('Profile section, e.g. Personal details, Dependants, Employment, Objectives, Pensions, Investments, Liabilities, Protection, Meetings & actions, Correspondence, Compliance'),
+      field: str('Specific field including whose it is, e.g. "Sarah Henderson: Employer" or "Aviva pension AV-PP-7731904: Value"'),
+      value: str('The value found in this document'),
+      existing_value: str('For update/conflict: the value currently in the record. For new: ""'),
+      quote: str('Citation: an exact, short quote from the document that supports the value'),
+    }),
+    'The useful facts found, at most 20'
+  ),
+});
+
+async function extract({ name, model, text }) {
+  const result = await askModel({
+    system: `${SIESTA_RULES}
+
+You are Afternoon's document extraction engine. Read ONE uploaded document and list the client facts in it.
+Upload model chosen by the adviser: "${model}". ${UPLOAD_MODELS[model] || UPLOAD_MODELS.Core}
+Compare every fact with the CURRENT CLIENT RECORD:
+- new: not in the record yet.
+- update: already in the record, and this document has a newer or more complete value that doesn't contradict it.
+- conflict: contradicts what's in the record (e.g. a different employer). Show both values.
+Every item needs an exact quote from the document as its citation. Only extract what the document says: never infer or fill gaps.`,
+    schemaName: 'extraction',
+    schema: EXTRACT_SCHEMA,
+    user: `${recordText()}\n\nDOCUMENT: ${name}\n\n${text.slice(0, 30_000)}`,
+  });
+  result.items.forEach((item) => (item.file = `uploads/${name}`));
+  return result;
+}
+
+// The adviser has reviewed the findings and clicked "Finalise review".
+// Accepted fields land on the record (updates and conflicts replace the old
+// value), and the documents become searchable: they "stay in the client's
+// Documents area", so Siesta can quote them later.
+function finalise({ documents, accepted }) {
+  for (const doc of documents) {
+    const file = `uploads/${doc.name}`;
+    state.documents.push({ file, model: doc.model });
+    state.documentChunks.push(...chunkDocument(file, doc.text));
+  }
+  for (const item of accepted) {
+    const same = (r) => r.section === item.section && r.field.toLowerCase() === item.field.toLowerCase();
+    state.record = state.record.filter((r) => !same(r));
+    state.record.push({ section: item.section, field: item.field, value: item.value, file: item.file });
+  }
+  return { ok: true, fields: state.record.length, documents: state.documents.length };
+}
+
+// -----------------------------------------------------------------------------
+// 6. /api/run — do one task
 // -----------------------------------------------------------------------------
 // One schema covers every kind of output. Fields that don't apply come back
 // empty, and the UI only shows what's filled in. WHY one schema? One endpoint,
@@ -258,9 +351,9 @@ async function triage({ tasks }) {
 const RUN_SCHEMA = obj({
   headline: str('One short line summarising the result'),
   body: str('The main result. Plain text; you may use "## " headings, "- " bullets and **bold**. Keep it scannable.'),
-  sources: arr(obj({ file: str('File path exactly as in [source: ...]'), quote: str('Short exact quote from that file') }), 'Citations backing the result'),
+  sources: arr(obj({ file: str('File path exactly as in [source: ...] or (from ...)'), quote: str('Short exact quote from that file') }), 'Citations backing the result'),
   email: {
-    anyOf: [obj({ to: str('Recipient address from the files, or "" if unknown'), subject: str(''), body: str('Email body, signed off as Matthew') }), { type: 'null' }],
+    anyOf: [obj({ to: str('Recipient address from the documents, or "" if unknown'), subject: str(''), body: str('Email body, signed off as Matthew') }), { type: 'null' }],
     description: 'An email DRAFT for the adviser to send themselves, or null',
   },
   proposals: arr(
@@ -278,8 +371,8 @@ const RUN_SCHEMA = obj({
 
 const RUN_SYSTEM = `${SIESTA_RULES}
 
-You are now doing ONE task from the adviser's to-do list. Use only the client file excerpts, the session context and the capabilities document.
-- Back facts with sources: quote the exact words from the excerpts, with the file path.
+You are now doing ONE task from the adviser's to-do list. Use only the client record, the document excerpts, the session context and the capabilities document.
+- Back facts with sources: quote the exact words from the documents, with the file path.
 - Emails are drafts only; the adviser sends them from their own Outlook.
 - Record changes are proposals only; the adviser approves them.
 - For a walkthrough, give clear numbered steps from the user guide excerpt and remind them you can't click for them.
@@ -301,15 +394,22 @@ async function runTask({ task, answers, handoffNote, doAlternative }) {
     system: RUN_SYSTEM,
     schemaName: 'task_result',
     schema: RUN_SCHEMA,
-    user: `TASK: ${task.text}\nHOW YOU SORTED IT: ${t.kind}. ${t.reason}\nYOUR PART: ${t.siesta_part}\n\n${extra}\n\n${sessionContext()}\n\nCLIENT FILE EXCERPTS:\n${formatChunks(hits)}\n\nCAPABILITIES DOCUMENT:\n${CAPABILITIES}`,
+    user: `TASK: ${task.text}\nHOW YOU SORTED IT: ${t.kind}. ${t.reason}\nYOUR PART: ${t.siesta_part}\n\n${extra}\n\n${sessionContext()}\n\nDOCUMENT EXCERPTS:\n${formatChunks(hits)}\n\nCAPABILITIES DOCUMENT:\n${CAPABILITIES}`,
   });
 }
 
 // -----------------------------------------------------------------------------
-// 6. HTTP server: static files + JSON routes
+// 7. HTTP server: static files + JSON routes
 // -----------------------------------------------------------------------------
 const ROUTES = {
+  // Each page load is a first login, so it wipes the session.
+  'POST /api/reset': () => {
+    Object.assign(state, freshState());
+    return { ok: true };
+  },
   'POST /api/triage': (body) => triage(body),
+  'POST /api/extract': (body) => extract(body),
+  'POST /api/finalise': (body) => finalise(body),
   'POST /api/run': (body) => runTask(body),
   // Approving only records the change in session state. WHY? Nothing in
   // Afternoon should change without a human saying yes, and this is the one
@@ -323,7 +423,7 @@ const ROUTES = {
     else state.memories.push(body.text);
     return { ok: true, memories: state.memories, skills: state.skills };
   },
-  'GET /api/state': () => state,
+  'GET /api/state': () => ({ ...state, documentChunks: state.documentChunks.length }),
 };
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -363,5 +463,5 @@ http
   })
   .listen(PORT, () => {
     console.log(`Siesta To-Do Onboarding running at http://localhost:${PORT}`);
-    console.log(`Model: ${MODEL} · ${CHUNKS.length} searchable chunks loaded from data/`);
+    console.log(`Model: ${MODEL} · ${GUIDE_CHUNKS.length} user-guide chunks loaded · client data comes from uploads`);
   });
