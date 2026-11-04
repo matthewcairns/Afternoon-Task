@@ -33,9 +33,10 @@ Open http://localhost:3000. **Every page load is a fresh first login**: the sess
 3. **Fix the list:** drag to reorder, ✎ to edit a card (it gets sorted again), × to delete, **+ Add task** for anything missed.
 4. **Each task is its own chat with Siesta.** Open a card: the first message is the task's brief (why it's that colour, how Afternoon helps anyway, and the questions or actions needed), and below it you talk to Siesta about just that task.
 5. **Upload:** open *Start here*. It lists what each task is waiting for, then walks through the platform's steps. Use the files in **`demo-uploads/`**.
-   - **Batch 1 (5 files):** fact find, valuations CSV, 2025 review transcript, actions CSV, Aviva emails. Upload, **Process data**, **Add everything as new**, **Finalise review**.
+   - **Batch 1 (5 files):** fact find, valuations CSV, 2025 review transcript, actions CSV, Aviva emails. Upload, then **Process data**. Siesta just says **Files uploaded** (the demo skips the field-by-field review).
    - Siesta sorts the list again, and three tasks turn 🟢: review prep, the pension question and the Aviva chaser.
-   - **Batch 2 (optional):** `sarah-voicemail-file-note-2026-10-28.txt` shows a **conflict**: the record says Northgate, but the voicemail says she's left.
+   - **Batch 2 (optional):** `sarah-voicemail-file-note-2026-10-28.txt` updates Sarah's employment (she's left Northgate).
+   - Every finished task shows **Task complete** with a **Next task →** button that moves you to the next unfinished task in your priority order.
 6. **Start working** (top of the list): Siesta does the green tasks top-down in the background, producing a review pack, a cited answer and a chaser draft. The Conversation tab pings you as each one finishes.
 7. **Follow up in a task's chat**, e.g. open the Aviva chaser and type "Make it shorter and copy in Sarah". Siesta returns a revised draft with Sarah in Cc.
 8. **Yellow and red:** "Call Sarah" is a handoff: type what Sarah said into its chat, then approve the proposed updates. "Outlook" gets a walkthrough. The ISA task can't be done, so it offers an allowance check instead.
@@ -62,7 +63,7 @@ Open http://localhost:3000. **Every page load is a fresh first login**: the sess
   - choose up to 5 files and pick an upload model for each (Fact Find, Core, DARSCO, IO Fund Valuation; Siesta suggests one);
   - each file goes from *Extracting* to *Ready*, then **Process data**;
   - review the findings as new information, updates and conflicts, each with a citation;
-  - use the global buttons or decide item by item, then **Finalise review**.
+  - in the product you'd then review each field and **Finalise review**; for the demo, Process data accepts everything and just says **Files uploaded**.
   - The other two routes (valuation feeds, manual entry) are explained.
 - **Extraction is real.** Each file's text goes to the AI with the chosen upload model. Accepted fields become the client record, and the documents become searchable for later tasks.
 - **Only drafts and proposes.** Emails are editable drafts that you open in your own mail app and send yourself. Record changes need **Approve**.

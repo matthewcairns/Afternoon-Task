@@ -370,11 +370,7 @@ async function resortAfterUpload(uploadTask) {
   uploadTask.messages = uploadTask.messages.filter((m) => m.kind !== 'typing');
   if (!ok) return refresh(uploadTask);
   const turned = open.filter((t) => t.triage.colour === 'green' && before.get(t.id) !== 'green');
-  post(uploadTask, {
-    text: turned.length
-      ? `🟢 ${turned.length} task${turned.length > 1 ? 's' : ''} turned green:\n${turned.map((t) => `- ${t.text}`).join('\n')}\n\n${started ? "They're in my queue now." : 'Press **Start working** at the top of your To-Do List and I\'ll get on with them.'}`
-      : "Nothing new turned green yet. Open a yellow card to see what's still missing.",
-  });
+  if (turned.length) post(uploadTask, { text: `🟢 ${turned.length} task${turned.length > 1 ? 's' : ''} turned green. ${started ? "They're in my queue." : 'Press **Start working** on your To-Do List.'}` });
   refresh(uploadTask);
 }
 
@@ -478,7 +474,7 @@ function renderCard(task, index) {
     needs_you: [WAITING_TEXT[t?.kind] || 'Needs you'],
     queued: ['Queued'],
     working: [spinner(), ' Working…'],
-    done: [task.id === 'upload' ? `✓ ${uploadSummary()}` : '✓ Done: review'],
+    done: ['✓ Task complete'],
     error: ['⚠ Error: open to retry'],
   }[task.status];
 
@@ -597,11 +593,34 @@ function renderTaskView() {
     t ? renderBrief(task) : el('div', { class: 'msg siesta' }, spinner(), ' Sorting…'),
     ...task.messages.map((m) => renderMessage(task, m)),
     task.status === 'working' && el('div', { class: 'msg siesta typing' }, spinner(), ' Working on it…'),
+    task.status === 'done' && renderComplete(task),
   ].filter(Boolean)); // replaceChildren would print a stray "false" otherwise
 
   if (switched || nearBottom || log.dataset.count !== count) log.scrollTop = switched && !task.messages.length ? 0 : log.scrollHeight;
   log.dataset.task = task.id;
   log.dataset.count = count;
+}
+
+// Shown at the end of a finished task's chat: a clear "Task complete" and a
+// button to move straight on to the next task, so the adviser keeps momentum.
+function renderComplete(task) {
+  const next = nextTask(task);
+  return el('div', { class: 'msg complete' },
+    confirmLine('Task complete'),
+    el('div', { class: 'actions' },
+      next
+        ? el('button', { class: 'btn', onclick: () => openTask(next.id) }, 'Next task →')
+        : el('button', { class: 'btn', onclick: backToList }, 'All tasks done: back to the list')
+    )
+  );
+}
+
+// The next task in list order that isn't finished yet (wrapping round to the
+// top), so "Next task" always follows the adviser's own priority.
+function nextTask(task) {
+  const i = tasks.indexOf(task);
+  const ordered = [...tasks.slice(i + 1), ...tasks.slice(0, i)];
+  return ordered.find((t) => t.status !== 'done' && t.triage);
 }
 
 // The first message in every task chat: why it's that colour, how Afternoon

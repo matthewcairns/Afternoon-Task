@@ -7,10 +7,11 @@
 // data/guide/afternoon-user-guide-adding-client-data.md:
 //
 //   choose files -> pick an upload model -> Extracting -> Ready -> Process data
-//   -> review new / updates / conflicts (with citations) -> Finalise review
+//   -> (in the product: review new / updates / conflicts, then Finalise review;
+//       the demo accepts everything and just says "Files uploaded")
 //
 // The extraction is REAL: each file's text goes to /api/extract, where the AI
-// reads it. When the adviser finalises, the accepted fields become the client
+// reads it. When the adviser clicks Process data, the extracted fields become the client
 // record, and app.js sorts the to-do list again, so tasks can turn green.
 //
 // Uses helpers from app.js (el, api, say, refresh, ...). Both files are plain
@@ -28,7 +29,7 @@ const SUPPORTED = /\.(pdf|docx|txt|png|jpe?g|csv|xlsx?|xlsm|mp3|mp4|wav|aac|flac
 
 // The current upload batch, and what's already been finalised.
 const upload = {
-  stage: 'choose', // choose -> extracting -> ready -> review -> choose
+  stage: 'choose', // choose -> extracting -> ready -> processing -> choose
   files: [], // { name, text, model, status, note, extraction }
   finalised: [], // names of documents now in Afternoon
 };
@@ -65,7 +66,6 @@ function ensureUploadCard() {
 
 const uploadTask = () => tasks.find((t) => t.id === 'upload');
 
-const uploadSummary = () => `${upload.finalised.length} document${upload.finalised.length === 1 ? '' : 's'} in Afternoon`;
 
 // -----------------------------------------------------------------------------
 // The walkthrough shown when the "Start here" card is opened
@@ -101,7 +101,7 @@ function renderUploadGuide() {
       el('summary', {}, '3. Manual entry'),
       el('p', {}, "Use the Create button on the client profile for anything missing. It's useful for gaps after a bulk upload.")
     ),
-    el('p', { class: 'tip' }, '💡 Tip: batch-upload the fact find plus the key statements (5 files per batch), use "Add everything as new" / "Update all" when you trust the documents, then top up any gaps manually.')
+    el('p', { class: 'tip' }, '💡 Tip: batch-upload the fact find plus the key statements (5 files per batch), then top up any gaps manually.')
   );
 }
 
@@ -110,8 +110,7 @@ function renderUploadGuide() {
 // -----------------------------------------------------------------------------
 function renderUploadWidget() {
   if (upload.stage === 'choose') return renderChoose();
-  if (upload.stage === 'extracting' || upload.stage === 'ready') return renderExtracting();
-  return renderReview();
+  return renderExtracting();
 }
 
 // Steps 1 and 2: choose files and pick each file's upload model.
@@ -133,7 +132,7 @@ function renderChoose() {
 
   const readable = upload.files.filter((f) => !f.note);
   return el('div', {},
-    upload.finalised.length > 0 && el('p', { class: 'confirm' }, `✓ ${uploadSummary()}: ${upload.finalised.join(', ')}`),
+    upload.finalised.length > 0 && el('p', { class: 'confirm' }, `✓ Files uploaded: ${upload.finalised.join(', ')}`),
     el('div', { class: 'step' }, el('b', {}, 'Step 1'), ' Choose the files'),
     drop,
     upload.files.length > 0 && [
@@ -197,68 +196,22 @@ function renderExtracting() {
   return el('div', {},
     el('div', { class: 'step' }, el('b', {}, 'Step 3'), ' Afternoon is reading each file with AI'),
     upload.files.map((f) => el('div', { class: 'file-row' }, el('span', { class: 'file-name' }, f.name), el('small', {}, f.model), chip(f))),
-    upload.stage === 'ready' && anyReady && el('button', { class: 'btn', onclick: () => { upload.stage = 'review'; refresh(); } }, 'Process data')
+    upload.stage === 'ready' && anyReady && el('button', { class: 'btn', onclick: processData }, 'Process data'),
+    upload.stage === 'processing' && el('div', { class: 'status-line' }, spinner(), 'Processing data…')
   );
 }
 
-// Step 4: review everything found, grouped like the platform: new information,
-// updates and conflicts. Every field shows its citation.
-const GROUPS = [
-  ['new', 'New information', [['Add', 'add'], ['Discard', 'discard']]],
-  ['update', 'Updates', [['Update', 'update'], ['Discard', 'discard']]],
-  ['conflict', 'Conflicts', [['Use new value', 'update'], ['Keep existing', 'discard']]],
-];
-
-const allItems = () => upload.files.filter((f) => f.extraction).flatMap((f) => f.extraction.items);
-
-function renderReview() {
-  const items = allItems();
-  const accepted = items.filter((i) => i.decision === 'add' || i.decision === 'update');
-  const undecided = items.filter((i) => !i.decision).length;
-  const setAll = (groups, decision) => { items.filter((i) => groups.includes(i.group)).forEach((i) => (i.decision = decision)); refresh(); };
-
-  return el('div', {},
-    el('div', { class: 'step' }, el('b', {}, 'Step 4'), ' Check what was found'),
-    upload.files.filter((f) => f.extraction).map((f) => el('p', { class: 'small' }, el('strong', {}, f.name), ': ', f.extraction.summary)),
-    // The global buttons are "the real time-saver" when the documents are trusted.
-    el('div', { class: 'actions' },
-      el('button', { class: 'btn light', onclick: () => setAll(['new'], 'add') }, 'Add everything as new'),
-      el('button', { class: 'btn light', onclick: () => setAll(['update', 'conflict'], 'update') }, 'Update all information')
-    ),
-    GROUPS.map(([group, title, buttons]) => {
-      const list = items.filter((i) => i.group === group);
-      return list.length > 0 && el('div', { class: `review-group ${group}` },
-        el('h4', {}, `${title} (${list.length})`),
-        list.map((item) => renderItem(item, buttons))
-      );
-    }),
-    el('div', { class: 'section' },
-      el('div', { class: 'step' }, el('b', {}, 'Step 5'), ' Finalise review: accepted fields land on the client profile'),
-      undecided > 0 && el('p', { class: 'small' }, `${undecided} item${undecided === 1 ? '' : 's'} not decided yet will be left out.`),
-      el('button', { class: 'btn', disabled: accepted.length ? null : '', onclick: () => finaliseUpload(accepted) }, `Finalise review (${accepted.length} field${accepted.length === 1 ? '' : 's'})`)
-    )
-  );
-}
-
-function renderItem(item, buttons) {
-  const decided = item.decision && el('span', { class: `chip ${item.decision === 'discard' ? '' : 'green'}` }, { add: 'Added', update: 'Updated', discard: 'Discarded' }[item.decision]);
-  return el('div', { class: 'review-item' },
-    el('div', { class: 'small' }, item.section),
-    el('strong', {}, item.field),
-    item.existing_value && el('div', { class: 'old' }, item.existing_value),
-    el('div', { class: 'new' }, item.value),
-    // Citation: the exact text the value came from, so the adviser can check it.
-    el('details', { class: 'cite' }, el('summary', {}, 'Citation'), el('blockquote', {}, `"${item.quote}"`, el('cite', {}, item.file))),
-    el('div', { class: 'actions' },
-      decided,
-      buttons.map(([label, decision]) => el('button', { class: item.decision === decision ? 'btn' : 'btn ghost', onclick: () => { item.decision = decision; refresh(); } }, label))
-    )
-  );
-}
-
-// Step 5: send the reviewed fields to the server, then re-sort the to-do list.
-async function finaliseUpload(accepted) {
+// Step 4: Process data. In the product the adviser now reviews every field
+// (new information, updates, conflicts, each with a citation) and clicks
+// "Finalise review". For the demo we skip that long list: everything found is
+// accepted (the "Add everything as new" + "Update all information" shortcut)
+// and the adviser just sees "Files uploaded". The citations are still sent to
+// the server, so the extraction is real; only the review screen is skipped.
+async function processData() {
+  upload.stage = 'processing';
+  refresh();
   const docs = upload.files.filter((f) => f.extraction);
+  const accepted = docs.flatMap((f) => f.extraction.items);
   await api('/api/finalise', { documents: docs.map(({ name, model, text }) => ({ name, model, text })), accepted });
   upload.finalised.push(...docs.map((f) => f.name));
   upload.files = [];
@@ -270,8 +223,8 @@ async function finaliseUpload(accepted) {
   card.triage.colour = 'green';
   card.triage.short_label = 'Add more anytime';
 
-  // Report in this task's chat, then re-sort the list (app.js).
-  card.messages.push({ role: 'siesta', kind: 'note', text: `Review finalised: ${accepted.length} fields from ${docs.length} document${docs.length === 1 ? '' : 's'} are now on the Hendersons' profile. The originals stay in their Documents area.` });
+  // Keep the message short for the demo, then re-sort the list (app.js).
+  card.messages.push({ role: 'siesta', kind: 'note', text: `Files uploaded (${docs.length}).` });
   refresh();
   await resortAfterUpload(card);
 }
