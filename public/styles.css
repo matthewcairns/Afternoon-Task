@@ -269,3 +269,4 @@ details.sources cite { display: block; color: #8a7766; font-size: 11px; font-sty
 .cite blockquote { margin: 4px 0; padding: 5px 8px; border-left: 3px solid var(--orange); background: #fffaf5; font-size: 12px; }
 .cite cite { display: block; color: #8a7766; font-size: 11px; font-style: normal; }
 .sheet .confirm { color: #13724a; }
+.modal .intro { font-size: 15px; color: var(--text); }
